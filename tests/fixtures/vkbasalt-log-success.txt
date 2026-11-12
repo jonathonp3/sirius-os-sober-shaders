@@ -1,0 +1,4 @@
+vkBasalt info:  config file: /var/home/jonathon/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
+vkBasalt info:  effects = dbd:blm:cas:clr:crv:vib
+vkBasalt info:  casSharpness = 0.30
+vkBasalt info:  enableOnLaunch = True

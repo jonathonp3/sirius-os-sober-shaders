@@ -1,0 +1,2 @@
+org.vinegarhq.Sober                           stable
+org.gnome.Platform                           51

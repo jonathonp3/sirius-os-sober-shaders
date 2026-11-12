@@ -1,0 +1,3 @@
+org.freedesktop.Platform.VulkanLayer.vkBasalt 26.08
+org.vinegarhq.Sober                           stable
+org.gnome.Platform                           51

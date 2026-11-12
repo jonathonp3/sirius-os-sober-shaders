@@ -1,0 +1,15 @@
+[Runtime]
+name=org.gnome.Platform
+runtime=org.gnome.Platform/x86_64/51
+sdk=org.gnome.Sdk/x86_64/51
+
+[Extension org.freedesktop.Platform.GL]
+version=26.08
+directory=lib/extensions/GL
+
+[Extension org.freedesktop.Platform.VulkanLayer]
+version=26.08
+directory=lib/extensions/vulkan
+subdirectories=true
+no-autodownload=true
+merge-dirs=share/vulkan/implicit_layer.d;share/vulkan/explicit_layer.d;

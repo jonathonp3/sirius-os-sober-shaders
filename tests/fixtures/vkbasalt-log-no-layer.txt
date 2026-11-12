@@ -1,0 +1,3 @@
+info: app: lifecycle: app_start delta=4.0ms
+info: window: Will load Vulkan libs
+info: window: Loaded Vulkan libs successfully

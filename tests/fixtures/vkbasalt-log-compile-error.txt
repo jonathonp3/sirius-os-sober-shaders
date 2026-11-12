@@ -1,0 +1,3 @@
+vkBasalt info:  config file: /var/home/jonathon/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
+vkBasalt info:  effects = dbd
+vkBasalt err:   /var/home/jonathon/.var/app/org.vinegarhq.Sober/config/vkBasalt/Shaders/Deband.fx(232, 44): error X3004: undeclared identifier 'BUFFER_COLOR_BIT_DEPTH'

@@ -1,0 +1,3 @@
+vkBasalt info:  config file: /var/home/jonathon/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
+vkBasalt info:  effects = dbd:blm
+vkBasalt err:   couldn't open texture: /var/home/jonathon/.var/app/org.vinegarhq.Sober/config/vkBasalt/Textures/LensDBA.png

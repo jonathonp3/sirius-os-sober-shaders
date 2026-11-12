@@ -1,0 +1,6 @@
+[Application]
+name=org.vinegarhq.Sober
+runtime=org.gnome.Platform/x86_64/51
+sdk=org.gnome.Sdk/x86_64/51
+command=sober
+branch=stable
