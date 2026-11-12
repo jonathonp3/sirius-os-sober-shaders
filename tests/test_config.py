@@ -13,7 +13,7 @@ def test_parse_valid():
     assert cfg.effects == ["dbd", "blm", "cas", "clr", "crv", "vib"]
     assert cfg.shader_paths["dbd"].endswith("Deband.fx")
     assert cfg.parameters["casSharpness"] == "0.30"
-    assert cfg.parameters["range"] == "16.0"
+    assert cfg.parameters["Range"] == "16.0"
     assert cfg.reshade_texture_path is not None
     assert cfg.reshade_texture_path.startswith("/var/home/")
     assert cfg.depth_capture == "off"

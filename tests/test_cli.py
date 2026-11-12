@@ -223,3 +223,75 @@ def test_rollback_restores(monkeypatch, capsys, tmp_path):
     assert active.read_text() == "effects = cas\n"
     out = capsys.readouterr().out
     assert "Rolled back" in out
+
+def test_list_shaders_human(capsys, tmp_path):
+    (tmp_path / "A.fx").write_text(
+        'uniform float x < ui_type = "slider"; ui_min = 0.0; ui_max = 1.0; > = 0.5;\n'
+    )
+    (tmp_path / "B.fx").write_text('uniform int y = 2;\n')
+
+    code = cli_main.main(["list-shaders", "--shader-dir", str(tmp_path)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "A.fx" in out
+    assert "x = 0.5" in out
+    assert "B.fx" in out
+
+
+def test_list_shaders_empty(capsys, tmp_path):
+    code = cli_main.main(["list-shaders", "--shader-dir", str(tmp_path)])
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "No .fx files found" in err
+
+
+def test_list_shaders_json(capsys, tmp_path):
+    (tmp_path / "A.fx").write_text("uniform float x = 0.5;\n")
+    code = cli_main.main(
+        ["--json", "list-shaders", "--shader-dir", str(tmp_path)]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert '"name": "A"' in out
+
+
+def test_fetch_shaders_already_present(capsys, tmp_path, monkeypatch):
+    from core import fetch as fetch_mod
+
+    def fake_fetch(dest, *, update=False, **kw):
+        return fetch_mod.FetchResult(
+            action="already-present", dest=dest, success=True,
+            message=f"{dest} already exists. Use --update to refresh.",
+        )
+
+    monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
+    code = cli_main.main(["fetch-shaders", "--dest", str(tmp_path)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "already exists" in out
+
+
+def test_fetch_shaders_clone_success(capsys, tmp_path, monkeypatch):
+    from core import fetch as fetch_mod
+
+    def fake_fetch(dest, *, update=False, **kw):
+        return fetch_mod.FetchResult(
+            action="cloned", dest=dest, success=True, message="",
+        )
+
+    monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
+    code = cli_main.main(["fetch-shaders", "--dest", str(tmp_path)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Cloned GShade-Shaders" in out
+
+
+def test_fetch_shaders_git_missing(capsys, tmp_path, monkeypatch):
+    from core import fetch as fetch_mod
+
+    def fake_fetch(dest, **kw):
+        raise fetch_mod.FetchError("`git` not found in PATH")
+
+    monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
+    code = cli_main.main(["fetch-shaders", "--dest", str(tmp_path)])
+    assert code == 11    

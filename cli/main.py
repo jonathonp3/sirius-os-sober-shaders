@@ -29,6 +29,102 @@ DEFAULT_ACTIVE_CONFIG = Path.home() / (
 def _backup_path(active: Path) -> Path:
     return active.with_name("last-known-good.conf")
 
+def cmd_list_shaders(args: argparse.Namespace) -> int:
+    from core import shader as shader_mod
+
+    shader_dir = (
+        Path(args.shader_dir).expanduser()
+        if args.shader_dir
+        else Path.home() / "GShade-Shaders" / "Shaders"
+    )
+    infos = shader_mod.discover(shader_dir)
+
+    if args.json:
+        import dataclasses, json
+        print(json.dumps(
+            {
+                "shader_dir": str(shader_dir),
+                "shaders": [
+                    {
+                        "name": i.name,
+                        "path": str(i.path),
+                        "uniforms": [dataclasses.asdict(u) for u in i.uniforms],
+                        "includes": i.includes,
+                        "textures": i.textures,
+                        "warnings": i.parse_warnings,
+                    }
+                    for i in infos
+                ],
+            },
+            indent=2,
+        ))
+        return 0
+
+    if not infos:
+        print(f"No .fx files found in {shader_dir}", file=sys.stderr)
+        return 0
+
+    print(f"Shader directory: {shader_dir}")
+    print()
+    for info in infos:
+        missing = shader_mod.check_dependencies(
+            info,
+            include_dir=shader_dir,
+            texture_dir=shader_dir.parent / "Textures",
+        )
+        marker = ""
+        if missing:
+            marker = f"  [{len(missing)} missing dep(s)]"
+        print(f"{info.name}.fx{marker}")
+        for u in info.uniforms:
+            if u.ui_type == "slider" and u.ui_min is not None and u.ui_max is not None:
+                print(f"  {u.name} = {u.default}  [{u.ui_min}–{u.ui_max}]")
+            elif u.ui_type == "combo" and u.ui_items:
+                print(f"  {u.name} = {u.default}  [{', '.join(u.ui_items)}]")
+            else:
+                print(f"  {u.name} = {u.default}")
+        print()
+    return 0
+
+
+def cmd_fetch_shaders(args: argparse.Namespace) -> int:
+    from core import fetch as fetch_mod
+
+    dest = (
+        Path(args.dest).expanduser()
+        if args.dest
+        else Path.home() / "GShade-Shaders"
+    )
+    try:
+        result = fetch_mod.fetch(dest, update=args.update)
+    except fetch_mod.FetchError as e:
+        print(f"fetch failed: {e}", file=sys.stderr)
+        return 11
+
+    if args.json:
+        import json
+        print(json.dumps(
+            {
+                "action": result.action,
+                "dest": str(result.dest),
+                "success": result.success,
+                "message": result.message,
+            },
+            indent=2,
+        ))
+    else:
+        if result.action == "cloned":
+            print(f"Cloned GShade-Shaders to {result.dest}")
+        elif result.action == "updated":
+            print(f"Updated {result.dest}")
+        elif result.action == "already-present":
+            print(result.message)
+        else:
+            print(f"Failed: {result.message}", file=sys.stderr)
+
+    if result.action == "failed":
+        return 12
+    return 0
 
 # --- commands ------------------------------------------------------------
 
@@ -235,8 +331,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("rollback", help="Restore last-known-good.conf")
 
-    return parser
+    p_list = sub.add_parser(
+        "list-shaders",
+        help="Parse .fx files and show their uniforms",
+    )
+    p_list.add_argument(
+        "--shader-dir",
+        help="Directory containing .fx files (default: ~/GShade-Shaders/Shaders)",
+    )
 
+    p_fetch = sub.add_parser(
+        "fetch-shaders",
+        help="Clone or update the GShade-Shaders repository",
+    )
+    p_fetch.add_argument(
+        "--dest",
+        help="Destination directory (default: ~/GShade-Shaders)",
+    )
+    p_fetch.add_argument(
+        "--update", action="store_true",
+        help="Update an existing clone instead of reporting already-present",
+    )
+
+    return parser
 
 COMMANDS = {
     "check": cmd_check,
@@ -244,8 +361,9 @@ COMMANDS = {
     "apply": cmd_apply,
     "launch": cmd_launch,
     "rollback": cmd_rollback,
+    "list-shaders": cmd_list_shaders,
+    "fetch-shaders": cmd_fetch_shaders,
 }
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
