@@ -16,6 +16,7 @@ is what keeps the effect on for the whole session.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -61,12 +62,25 @@ def _default_detached_runner(args: list[str]) -> "object":
     )
 
 
+def _flatpak_cmd() -> list[str]:
+    """
+    Return the base command for invoking flatpak.
+
+    Inside the Flatpak sandbox (SOBER_SHADER_HOST_FLATPAK=1), flatpak isn't
+    on PATH; it has to be reached via `flatpak-spawn --host`. On the host
+    (dev, CLI, tests), the direct `flatpak` command is used.
+    """
+    if os.environ.get("SOBER_SHADER_HOST_FLATPAK"):
+        return ["flatpak-spawn", "--host", "flatpak"]
+    return ["flatpak"]
+
+
 def _build_argv(verify: bool) -> list[str]:
     """Build the flatpak argv for launching Sober with vkBasalt."""
     env_flags = ["--env=ENABLE_VKBASALT=1"]
     if verify:
         env_flags.append("--env=VKBASALT_LOG_LEVEL=info")
-    return ["flatpak", "run", *env_flags, SOBER_APP_ID]
+    return [*_flatpak_cmd(), "run", *env_flags, SOBER_APP_ID]
 
 
 def _parse_vkbasalt_log(text: str) -> tuple[bool, list[str]]:

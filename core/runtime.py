@@ -16,6 +16,7 @@ by mocking the `run` function below.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -60,6 +61,19 @@ def _run(args: list[str], runner: Runner) -> "subprocess.CompletedProcess[str]":
         raise DetectionError(f"`{args[0]}` not found in PATH") from e
 
 
+def _flatpak_cmd() -> list[str]:
+    """
+    Return the base command for invoking flatpak.
+
+    Inside the Flatpak sandbox (SOBER_SHADER_HOST_FLATPAK=1), flatpak isn't
+    on PATH; it has to be reached via `flatpak-spawn --host`. On the host
+    (dev, CLI, tests), the direct `flatpak` command is used.
+    """
+    if os.environ.get("SOBER_SHADER_HOST_FLATPAK"):
+        return ["flatpak-spawn", "--host", "flatpak"]
+    return ["flatpak"]
+
+
 def detect_sober_runtime(runner: Runner = _default_runner) -> str | None:
     """
     Return Sober's runtime reference, e.g. "org.gnome.Platform//51".
@@ -69,7 +83,7 @@ def detect_sober_runtime(runner: Runner = _default_runner) -> str | None:
     section with `runtime=`.
     """
     result = _run(
-        ["flatpak", "info", "--show-metadata", SOBER_APP_ID],
+        [*_flatpak_cmd(), "info", "--show-metadata", SOBER_APP_ID],
         runner,
     )
     if result.returncode != 0:
@@ -110,7 +124,7 @@ def detect_vulkanlayer_version(
     flatpak_ref = f"{runtime_name}//{runtime_branch}"
 
     result = _run(
-        ["flatpak", "info", "--show-metadata", flatpak_ref],
+        [*_flatpak_cmd(), "info", "--show-metadata", flatpak_ref],
         runner,
     )
     if result.returncode != 0:
@@ -157,7 +171,7 @@ def detect_installed_vkbasalt_branches(
     version hasn't been cleaned up yet.
     """
     result = _run(
-        ["flatpak", "list", "--columns=application,branch"],
+        [*_flatpak_cmd(), "list", "--columns=application,branch"],
         runner,
     )
     if result.returncode != 0:
@@ -255,23 +269,4 @@ def check_compatibility(
         installed_vkbasalt_branch=first_installed,
         expected_vkbasalt_branch=expected_branch,
         fix_commands=fix,
-    )
-
-    if installed_branch != expected_branch:
-        return CompatibilityResult(
-            status="mismatch",
-            sober_runtime=sober_runtime,
-            installed_vkbasalt_branch=installed_branch,
-            expected_vkbasalt_branch=expected_branch,
-            fix_commands=[
-                f"flatpak install flathub {VKBASALT_EXTENSION_ID}//{expected_branch}",
-                f"flatpak uninstall {VKBASALT_EXTENSION_ID}//{installed_branch}",
-            ],
-        )
-
-    return CompatibilityResult(
-        status="ok",
-        sober_runtime=sober_runtime,
-        installed_vkbasalt_branch=installed_branch,
-        expected_vkbasalt_branch=expected_branch,
     )
