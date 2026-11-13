@@ -64,6 +64,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._show_all_shaders = False
         self._cas_enabled: bool = False
         self._cas_slider: Gtk.Scale | None = None
+        self._active_config_parameters: dict[str, str] = {}
 
         self._build_ui()
         self._refresh()
@@ -180,6 +181,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._shaders = shader_mod.discover(DEFAULT_SHADER_DIR)
         self._populate_list()
+        self._load_active_config()
 
     def _populate_list(self) -> None:
         while (row := self._listbox.get_first_child()) is not None:
@@ -197,6 +199,46 @@ class MainWindow(Adw.ApplicationWindow):
             for s in self._shaders:
                 if s.name not in SHORTLIST:
                     self._add_row(s)
+
+    def _load_active_config(self) -> None:
+        """
+        Read the active vkBasalt.conf and check the corresponding boxes,
+        so reopening the GUI reflects what's currently applied.
+        """
+        active = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf"
+        if not active.exists():
+            return
+
+        try:
+            cfg = config_mod.parse(active)
+        except config_mod.ConfigError:
+            return
+
+        # Stash parameter values so _add_slider can restore them when the
+        # toggled signal rebuilds the parameter UI.
+        self._active_config_parameters = dict(cfg.parameters)
+
+        alias_to_name = {v: k for k, v in SHADER_ALIASES.items()}
+        selected_names = {alias_to_name.get(alias, alias) for alias in cfg.effects}
+
+        row = self._listbox.get_first_child()
+        while row is not None:
+            next_row = row.get_next_sibling()
+            if isinstance(row, Adw.ActionRow):
+                name = row.get_title()
+                if name in selected_names:
+                    check = row.get_activatable_widget()
+                    if isinstance(check, Gtk.CheckButton):
+                        check.set_active(True)
+            row = next_row
+
+        if "cas" in cfg.effects:
+            self._cas_check.set_active(True)
+        if "casSharpness" in cfg.parameters and self._cas_slider is not None:
+            try:
+                self._cas_slider.set_value(float(cfg.parameters["casSharpness"]))
+            except (TypeError, ValueError):
+                pass
 
     def _add_row(self, s: shader_mod.ShaderInfo) -> None:
         missing = shader_mod.check_dependencies(
@@ -265,8 +307,10 @@ class MainWindow(Adw.ApplicationWindow):
         scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL, u.ui_min, u.ui_max, step,
         )
+        # Prefer the active config's value if present, else the shader default.
+        value = self._active_config_parameters.get(u.name, u.default)
         try:
-            scale.set_value(float(u.default))
+            scale.set_value(float(value))
         except (TypeError, ValueError):
             pass
         scale.set_hexpand(True)
