@@ -86,6 +86,36 @@ def cmd_list_shaders(args: argparse.Namespace) -> int:
         print()
     return 0
 
+def cmd_validate_config(args: argparse.Namespace) -> int:
+    config_path = Path(args.config_file)
+    try:
+        cfg = config_mod.parse(config_path)
+    except config_mod.ConfigError as e:
+        print(f"Invalid config: {e}", file=sys.stderr)
+        return 5
+
+    errors = config_mod.validate(cfg)
+
+    shader_dir = (
+        Path(args.shader_dir).expanduser()
+        if args.shader_dir
+        else Path.home() / "GShade-Shaders" / "Shaders"
+    )
+    errors += config_mod.validate_against_shaders(cfg, shader_dir)
+
+    if args.json:
+        import json
+        print(json.dumps({"valid": not errors, "errors": errors}, indent=2))
+    else:
+        if not errors:
+            print(f"{config_path}: OK")
+            print(f"Effects: {':'.join(cfg.effects)}")
+        else:
+            print(f"{config_path}: {len(errors)} error(s)", file=sys.stderr)
+            for e in errors:
+                print(f"  {e}", file=sys.stderr)
+
+    return 0 if not errors else 13
 
 def cmd_fetch_shaders(args: argparse.Namespace) -> int:
     from core import fetch as fetch_mod
@@ -348,9 +378,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--dest",
         help="Destination directory (default: ~/GShade-Shaders)",
     )
+   
     p_fetch.add_argument(
         "--update", action="store_true",
         help="Update an existing clone instead of reporting already-present",
+    )
+
+    p_validate = sub.add_parser(
+        "validate-config",
+        help="Check a vkBasalt.conf for structural and parameter-name errors",
+    )
+    p_validate.add_argument("config_file", help="Path to the vkBasalt.conf to check")
+    p_validate.add_argument(
+        "--shader-dir",
+        help="Directory containing .fx files (default: ~/GShade-Shaders/Shaders)",
     )
 
     return parser
@@ -363,6 +404,7 @@ COMMANDS = {
     "rollback": cmd_rollback,
     "list-shaders": cmd_list_shaders,
     "fetch-shaders": cmd_fetch_shaders,
+    "validate-config": cmd_validate_config,
 }
 
 def main(argv: list[str] | None = None) -> int:

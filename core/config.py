@@ -170,6 +170,76 @@ def validate(config: VkBasaltConfig) -> list[str]:
     return errors
 
 
+def validate_against_shaders(
+    config: VkBasaltConfig,
+    shader_dir: Path,
+) -> list[str]:
+    """
+    Return a list of config parameter names that don't match any uniform
+    in the shaders the config references.
+
+    vkBasalt silently ignores unknown parameter names, so a typo or a
+    case mismatch produces no error — the parameter just has no effect.
+    This function catches that by comparing each parameter name against
+    the uniform declarations in the referenced .fx files.
+
+    Returns an empty list if every parameter name matches a declared uniform.
+    """
+    # Local import: core.shader imports nothing from core.config, so this
+    # is only a convenience to avoid a circular import at module load.
+    from core import shader as shader_mod
+
+    errors: list[str] = []
+
+    # For each effect alias, find the shader file it points at.
+    alias_to_shader: dict[str, str] = {}
+    for alias, path in config.shader_paths.items():
+        alias_to_shader[alias] = Path(path).stem
+
+    # Collect valid parameter names per referenced shader.
+    valid_names: set[str] = set()
+    for shader_name in alias_to_shader.values():
+        shader_path = shader_dir / f"{shader_name}.fx"
+        if not shader_path.exists():
+            errors.append(
+                f"Shader file not found for validation: {shader_path}"
+            )
+            continue
+        try:
+            info = shader_mod.parse_fx(shader_path)
+        except Exception as e:
+            errors.append(f"Could not parse {shader_path}: {e}")
+            continue
+        valid_names.update(u.name for u in info.uniforms)
+
+    # Built-in effects have no .fx file but do have parameters.
+    valid_names.add("casSharpness")  # CAS
+    valid_names.add("dlsSharpness")  # DLS
+    valid_names.add("dlsDenoise")
+    valid_names.add("fxaaQualitySubpix")
+    valid_names.add("fxaaQualityEdgeThreshold")
+    valid_names.add("fxaaQualityEdgeThresholdMin")
+    valid_names.add("smaaEdgeDetection")
+    valid_names.add("smaaThreshold")
+    valid_names.add("smaaMaxSearchSteps")
+    valid_names.add("smaaMaxSearchStepsDiag")
+    valid_names.add("smaaCornerRounding")
+    valid_names.add("lutFile")
+
+    # Every parameter in the config must be a declared uniform somewhere.
+    for name in config.parameters:
+        if name not in valid_names:
+            # Suggest a case-insensitive match if one exists.
+            suggestion = next(
+                (v for v in valid_names if v.lower() == name.lower()),
+                None,
+            )
+            hint = f" (did you mean {suggestion}?)" if suggestion else ""
+            errors.append(f"Unknown parameter: {name}{hint}")
+
+    return errors
+
+
 def write(config: VkBasaltConfig, path: Path) -> None:
     """Serialize config to path, atomically (write to temp, then rename)."""
     lines: list[str] = []

@@ -295,3 +295,63 @@ def test_fetch_shaders_git_missing(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr(fetch_mod, "fetch", fake_fetch)
     code = cli_main.main(["fetch-shaders", "--dest", str(tmp_path)])
     assert code == 11    
+    
+def test_validate_config_ok(capsys, tmp_path):
+    """A config pointing at the shipped Deband.fx validates cleanly."""
+    repo_shaders = Path(__file__).parent.parent / "shaders"
+    deband = repo_shaders / "Deband.fx"
+    if not deband.exists():
+        pytest.skip("shipped Deband.fx not present")
+
+    cfg = tmp_path / "test.conf"
+    cfg.write_text(
+        f"effects = dbd\n"
+        f"dbd = {deband}\n"
+        f"Range = 16.0\n"
+        f"reshadeIncludePath = {repo_shaders}\n"
+    )
+    code = cli_main.main(
+        ["validate-config", str(cfg), "--shader-dir", str(repo_shaders)]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "OK" in out
+
+
+def test_validate_config_unknown_parameter(capsys, tmp_path):
+    shader_dir = tmp_path / "Shaders"
+    shader_dir.mkdir()
+    (shader_dir / "Deband.fx").write_text("uniform float Range = 16.0;\n")
+    cfg = tmp_path / "test.conf"
+    cfg.write_text(
+        f"effects = dbd\n"
+        f"dbd = {shader_dir}/Deband.fx\n"
+        f"range = 16.0\n"
+        f"reshadeIncludePath = {shader_dir}\n"
+    )
+    code = cli_main.main(
+        ["validate-config", str(cfg), "--shader-dir", str(shader_dir)]
+    )
+    assert code == 13
+    err = capsys.readouterr().err
+    assert "Unknown parameter: range" in err
+    assert "did you mean Range?" in err    
+
+def test_validate_config_rejects_host_path(capsys, tmp_path):
+    """validate-config rejects paths outside /var/home/, matching the sandbox rule."""
+    shader_dir = tmp_path / "Shaders"
+    shader_dir.mkdir()
+    (shader_dir / "Deband.fx").write_text("uniform float Range = 16.0;\n")
+    cfg = tmp_path / "test.conf"
+    cfg.write_text(
+        f"effects = dbd\n"
+        f"dbd = {shader_dir}/Deband.fx\n"
+        f"Range = 16.0\n"
+        f"reshadeIncludePath = {shader_dir}\n"
+    )
+    code = cli_main.main(
+        ["validate-config", str(cfg), "--shader-dir", str(shader_dir)]
+    )
+    assert code == 13
+    err = capsys.readouterr().err
+    assert "not under /var/home/" in err    
