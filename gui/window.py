@@ -483,7 +483,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._import_btn.set_sensitive(False)
 
         def worker():
-            result = cli_bridge.apply_config(tmp_path)
+            result = cli_bridge.apply_config(tmp_path, detach=True)
             GLib.idle_add(self._apply_done, result, tmp_path)
 
         threading.Thread(target=worker, daemon=True).start()

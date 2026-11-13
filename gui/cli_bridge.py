@@ -82,8 +82,13 @@ def check() -> CheckResult:
     )
 
 
-def apply_config(config_path: str) -> ApplyResult:
-    code, out, err = _run_cli(["apply", config_path], timeout=86400)
+def apply_config(config_path: str, detach: bool = False) -> ApplyResult:
+    args = ["apply", config_path]
+    if detach:
+        args.append("--detach")
+    # In detach mode, apply returns within ~20s (verify-then-detach timeout).
+    # In non-detach mode, it blocks until Sober exits.
+    code, out, err = _run_cli(args, timeout=86400 if not detach else 60)
     if not out.strip():
         return ApplyResult(ok=False, errors=[err.strip() or "apply returned no output"])
     data = json.loads(out)
@@ -93,7 +98,6 @@ def apply_config(config_path: str) -> ApplyResult:
         errors=data.get("errors", []),
         restored=data.get("restored", False),
     )
-
 
 def launch(detach: bool = True) -> LaunchResult:
     args = ["launch"]

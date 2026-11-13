@@ -64,7 +64,15 @@ def _default_detached_runner(args: list[str]) -> "object":
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
-
+    
+def _default_popen_runner(args: list[str]) -> "subprocess.Popen[bytes]":
+    return subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 def _flatpak_cmd() -> list[str]:
     """
@@ -131,30 +139,29 @@ def launch(
     *,
     detach: bool = False,
     verify: bool = False,
+    verify_then_detach: bool = False,
     runner: Runner = _default_runner,
     detached_runner: DetachedRunner = _default_detached_runner,
     running_checker: RunningChecker = _default_running_checker,
     settle_seconds: float = 1.5,
 ) -> LaunchResult:
     """
-    Launch Sober with vkBasalt enabled.
+    ...
+    Three modes are mutually exclusive:
+      normal            — block until Sober exits, return its exit code.
+      detached          — spawn and return immediately.
+      verify            — block until Sober exits, parse vkBasalt's output.
+      verify_then_detach — spawn, capture until vkBasalt reports, then
+                          leave the process running and return.
 
-    Exactly one of `detach` or `verify` should be True; if both are False,
-    it's a normal attached launch. If both are True, `verify` wins and
-    `detach` is ignored (verify mode needs the output).
-
-    `settle_seconds` is only used in detached mode: after Popen returns,
-    wait this long and poll. If the process already exited, treat it as
-    a launch failure.
-
-    Raises LaunchError if `running_checker()` returns True (Sober is
-    already running). Tests pass `running_checker=lambda: False` for
-    determinism, or `lambda: True` to assert the guard fires.
+    If verify_then_detach is True, it wins over verify and detach.
     """
     if running_checker():
         raise LaunchError(
             "Sober is already running. Close it before launching a new instance."
         )
+    if verify_then_detach:
+        return _launch_verify_then_detach(_default_popen_runner)
     if verify:
         return _launch_verify(runner)
     if detach:
@@ -225,3 +232,124 @@ def _launch_verify(runner: Runner) -> LaunchResult:
         vkbasalt_errors=errors,
         log_excerpt=_excerpt(combined),
     )
+
+def _launch_verify_then_detach(
+    runner: "subprocess.Popen[bytes]",
+    timeout: float = 20.0,
+) -> LaunchResult:
+    """
+    Launch Sober, capture output until vkBasalt reports its config (or an
+    error), then release the process so it keeps running.
+
+    The process is left in a running state; this function returns as soon
+    as the vkBasalt config block is seen (success) or an error/crash is
+    detected. Unlike _launch_verify, it does not wait for Sober to exit.
+
+    If the timeout elapses with no signal, the process is killed and the
+    result is a timeout failure — better than leaving a half-launched
+    Sober for the user to find.
+
+    The caller is responsible for the returned LaunchResult; the process
+    is not managed after this function returns.
+    """
+    import time
+
+    args = _build_argv(verify=True)
+    try:
+        proc = runner(args)
+    except FileNotFoundError as e:
+        raise LaunchError(f"`{args[0]}` not found in PATH") from e
+
+    # Read stdout line by line until we see the vkBasalt config block or an
+    # error, or the process exits, or the timeout hits.
+    captured: list[str] = []
+    loaded = False
+    errors: list[str] = []
+    deadline = time.monotonic() + timeout
+    exit_code: int | None = None
+
+    # Popen with stdout=PIPE gives us a readable stream. Read line by line
+    # so we can react as soon as the config block appears.
+    assert proc.stdout is not None
+    while True:
+        if time.monotonic() > deadline:
+            break
+        line = proc.stdout.readline()
+        if not line:
+            # Process closed stdout or exited.
+            exit_code = proc.poll()
+            break
+        text = line.decode("utf-8", errors="replace").rstrip()
+        captured.append(text)
+        if text.startswith("vkBasalt info:  config file:"):
+            loaded = True
+        if text.startswith("vkBasalt err:"):
+            errors.append(text[len("vkBasalt err:"):].strip())
+
+        # Once we've seen the config block and any early errors, we can
+        # stop capturing. vkBasalt reports the config synchronously during
+        # init, so a few hundred ms is enough.
+        if loaded:
+            break
+
+    if not loaded and not errors:
+        # Either timeout or process exited without a signal.
+        if exit_code is None:
+            # Timeout. Kill the process so we don't leave an unmanaged
+            # Sober running with no window.
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            return LaunchResult(
+                mode="verify-then-detach",
+                success=False,
+                exit_code=None,
+                pid=proc.pid,
+                log_excerpt=_excerpt("\n".join(captured)),
+            )
+        # Process exited before vkBasalt reported — probably a crash.
+        return LaunchResult(
+            mode="verify-then-detach",
+            success=False,
+            exit_code=exit_code,
+            pid=proc.pid,
+            log_excerpt=_excerpt("\n".join(captured)),
+        )
+
+    if errors:
+        # vkBasalt reported an error. The process is probably crashing;
+        # kill it so the caller's rollback runs cleanly and the user
+        # doesn't see a half-broken Sober.
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return LaunchResult(
+            mode="verify-then-detach",
+            success=False,
+            exit_code=None,
+            pid=proc.pid,
+            vkbasalt_loaded=loaded,
+            vkbasalt_errors=errors,
+            log_excerpt=_excerpt("\n".join(captured)),
+        )
+
+    # Success. The process keeps running; we return without managing it.
+    # Close our read end of the pipe so the process doesn't block on a
+    # full stdout buffer when the GUI exits.
+    try:
+        proc.stdout.close()
+    except Exception:
+        pass
+
+    return LaunchResult(
+        mode="verify-then-detach",
+        success=True,
+        exit_code=None,
+        pid=proc.pid,
+        vkbasalt_loaded=True,
+        vkbasalt_errors=[],
+        log_excerpt=_excerpt("\n".join(captured)),
+    )
+    

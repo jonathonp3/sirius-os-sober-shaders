@@ -226,8 +226,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print("Launching Sober (verify mode)...", file=sys.stderr)
 
     try:
-        result = launch_mod.launch(verify=True)
+        if getattr(args, "detach", False):
+            result = launch_mod.launch(verify_then_detach=True)
+        else:
+            result = launch_mod.launch(verify=True)
     except launch_mod.LaunchError as e:
+        ...
         # Could not even spawn flatpak — restore and fail.
         if had_active:
             config_mod.restore(backup, active)
@@ -239,7 +243,15 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if args.json:
             print(fmt.apply_json(True, [], False, new_cfg.effects))
         else:
-            print(fmt.apply_success_human(new_cfg.effects))
+            if getattr(args, "detach", False):
+                print("\n".join([
+                    "Result: SUCCESS",
+                    f"Effects: {':'.join(new_cfg.effects)}",
+                    "Sober is running in the background with the new config.",
+                    "Closing this terminal will not stop Sober.",
+                ]))
+            else:
+                print(fmt.apply_success_human(new_cfg.effects))
         return 0
 
     restored = False
@@ -344,6 +356,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate, write, and test a config; roll back on failure",
     )
     p_apply.add_argument("config_file", help="Path to the vkBasalt.conf to apply")
+    p_apply.add_argument(
+        "--detach", action="store_true",
+        help=(
+            "Verify the config and leave Sober running. Without this, apply "
+            "blocks until Sober exits."
+        ),
+    )
 
     p_launch = sub.add_parser("launch", help="Launch Sober with the active config")
     p_launch.add_argument(
