@@ -47,6 +47,10 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 # .poll(). Tests use a small fake; production uses subprocess.Popen.
 DetachedRunner = Callable[[list[str]], "object"]
 
+# A checker that returns True if Sober is currently running. Tests pass a
+# lambda so the result is deterministic; production uses _sober_running.
+RunningChecker = Callable[[], bool]
+
 
 def _default_runner(args: list[str]) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(args, capture_output=True, text=True, check=False)
@@ -73,6 +77,26 @@ def _flatpak_cmd() -> list[str]:
     if os.environ.get("SOBER_SHADER_HOST_FLATPAK"):
         return ["flatpak-spawn", "--host", "flatpak"]
     return ["flatpak"]
+
+
+def _sober_running() -> bool:
+    """
+    Return True if Sober is currently running (best-effort).
+
+    Sober doesn't support multiple instances; launching a second one while
+    the first is running crashes. If `flatpak ps` fails (timeout, flatpak
+    missing), returns False and the launch proceeds rather than blocking.
+    """
+    cmd = _flatpak_cmd() + ["ps", "--columns=application"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+    return SOBER_APP_ID in result.stdout
+
+
+def _default_running_checker() -> bool:
+    return _sober_running()
 
 
 def _build_argv(verify: bool) -> list[str]:
@@ -109,6 +133,7 @@ def launch(
     verify: bool = False,
     runner: Runner = _default_runner,
     detached_runner: DetachedRunner = _default_detached_runner,
+    running_checker: RunningChecker = _default_running_checker,
     settle_seconds: float = 1.5,
 ) -> LaunchResult:
     """
@@ -121,7 +146,15 @@ def launch(
     `settle_seconds` is only used in detached mode: after Popen returns,
     wait this long and poll. If the process already exited, treat it as
     a launch failure.
+
+    Raises LaunchError if `running_checker()` returns True (Sober is
+    already running). Tests pass `running_checker=lambda: False` for
+    determinism, or `lambda: True` to assert the guard fires.
     """
+    if running_checker():
+        raise LaunchError(
+            "Sober is already running. Close it before launching a new instance."
+        )
     if verify:
         return _launch_verify(runner)
     if detach:

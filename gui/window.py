@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from gui import _gi_setup  # noqa: F401  (must run before gi.repository imports)
 
+import json
 import shutil
 import tempfile
 import threading
@@ -50,6 +51,11 @@ SANDBOX_CONFIG_DIR = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt
 SANDBOX_SHADER_DIR = SANDBOX_CONFIG_DIR / "Shaders"
 SANDBOX_TEXTURE_DIR = SANDBOX_CONFIG_DIR / "Textures"
 
+# Persistent record of shader names the user explicitly imported. Used to
+# show them in the default shader list across restarts.
+IMPORTED_STATE_FILE = (
+    Path.home() / ".var/app/org.siriusos.SoberShaderManager/config/imported.json"
+)
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application):
@@ -68,6 +74,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._cas_slider: Gtk.Scale | None = None
         self._active_config_parameters: dict[str, str] = {}
         self._imported_names: set[str] = set()
+        try:
+            if IMPORTED_STATE_FILE.exists():
+                self._imported_names = set(json.loads(IMPORTED_STATE_FILE.read_text()))
+        except (json.JSONDecodeError, OSError):
+            pass
 
         self._build_ui()
         self._refresh()
@@ -239,8 +250,17 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Drop imported names whose files were deleted from the sandbox.
         self._imported_names &= set(by_name.keys())
-
+        self._save_imported_names()
         return sorted(by_name.values(), key=lambda s: s.name)
+
+    def _save_imported_names(self) -> None:
+        try:
+            IMPORTED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            IMPORTED_STATE_FILE.write_text(
+                json.dumps(sorted(self._imported_names))
+            )
+        except OSError:
+            pass
 
     def _load_active_config(self) -> None:
         """
@@ -295,9 +315,6 @@ class MainWindow(Adw.ApplicationWindow):
 
         check = Gtk.CheckButton()
         if missing:
-            # Don't let the user select a shader that will fail to compile.
-            # Apply would catch the failure and roll back, but preventing the
-            # selection is a better failure mode than a crash-and-restore.
             check.set_sensitive(False)
             check.set_tooltip_text(
                 "Missing dependencies:\n  " + "\n  ".join(missing)
@@ -305,6 +322,17 @@ class MainWindow(Adw.ApplicationWindow):
         check.connect("toggled", self._on_shader_toggled, s)
         row.add_prefix(check)
         row.set_activatable_widget(check)
+
+        # Delete button only for shaders that exist in the sandbox dir.
+        sandbox_path = SANDBOX_SHADER_DIR / s.path.name
+        if sandbox_path.exists():
+            del_btn = Gtk.Button.new_from_icon_name("user-trash-symbolic")
+            del_btn.add_css_class("flat")
+            del_btn.set_tooltip_text(
+                f"Remove {s.path.name} from the app's Shaders directory"
+            )
+            del_btn.connect("clicked", self._on_delete_shader, s)
+            row.add_suffix(del_btn)
 
         self._listbox.append(row)
 
@@ -443,8 +471,16 @@ class MainWindow(Adw.ApplicationWindow):
             tmp_path = f.name
             config_mod.write(cfg, Path(tmp_path))
 
+        # Disable all action buttons while Apply runs. Apply launches Sober
+        # in verify mode and blocks until it exits, so clicking Launch (or
+        # Rollback, Fetch, Import) mid-apply would race with the running
+        # Sober instance and crash it.
         self._apply_btn.set_sensitive(False)
         self._apply_btn.set_label("Applying…")
+        self._launch_btn.set_sensitive(False)
+        self._rollback_btn.set_sensitive(False)
+        self._fetch_btn.set_sensitive(False)
+        self._import_btn.set_sensitive(False)
 
         def worker():
             result = cli_bridge.apply_config(tmp_path)
@@ -456,6 +492,10 @@ class MainWindow(Adw.ApplicationWindow):
         Path(tmp_path).unlink(missing_ok=True)
         self._apply_btn.set_sensitive(True)
         self._apply_btn.set_label("Apply")
+        self._launch_btn.set_sensitive(True)
+        self._rollback_btn.set_sensitive(True)
+        self._fetch_btn.set_sensitive(True)
+        self._import_btn.set_sensitive(True)
 
         if result.ok:
             self._banner.set_title("Shaders applied successfully.")
@@ -475,9 +515,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_rollback(self, _btn) -> None:
         if cli_bridge.rollback():
+            self._refresh()
             self._banner.set_title("Rolled back to last-known-good.")
             self._banner.set_revealed(True)
-            self._refresh()
         else:
             show_error_dialog(self, "No backup found or rollback failed.")
 
@@ -496,11 +536,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._fetch_btn.set_label("Fetch shaders")
 
         if result.ok:
+            self._refresh()
             self._banner.set_title(
                 f"Shaders fetched to {result.dest}. Shader list refreshed."
             )
             self._banner.set_revealed(True)
-            self._refresh()
         else:
             show_error_dialog(self, f"Fetch failed: {result.message}")
         return False
@@ -539,6 +579,7 @@ class MainWindow(Adw.ApplicationWindow):
         copied = [src.name]
         shutil.copy2(src, SANDBOX_SHADER_DIR / src.name)
         self._imported_names.add(src.stem)
+        self._save_imported_names()
 
         try:
             info = shader_mod.parse_fx(src)
@@ -556,8 +597,50 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
+        self._refresh()
         self._banner.set_title(
             f"Imported {', '.join(copied)} into the app's Shaders directory."
         )
         self._banner.set_revealed(True)
-        self._refresh()
+
+    def _on_delete_shader(self, _btn, s: shader_mod.ShaderInfo) -> None:
+        sandbox_path = SANDBOX_SHADER_DIR / s.path.name
+        if not sandbox_path.exists():
+            show_error_dialog(self, f"{s.path.name} is not in the sandbox Shaders directory.")
+            return
+
+        # Confirm before deleting — this is irreversible.
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=f"Remove {s.path.name}?",
+            body=(
+                f"This deletes {sandbox_path.name} from the app's Shaders "
+                f"directory. If the shader also exists in ~/GShade-Shaders/, "
+                f"that copy is untouched and the shader will reappear in the "
+                f"list (under 'Show all')."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(dlg, response):
+            if response != "delete":
+                return
+            try:
+                sandbox_path.unlink()
+                self._imported_names.discard(s.name)
+                self._save_imported_names()
+                # Also drop it from the current selection so Apply doesn't
+                # reference a file that's gone.
+                self._selected.pop(s.name, None)
+                self._refresh()
+                self._banner.set_title(f"Removed {sandbox_path.name}.")
+                self._banner.set_revealed(True)
+            except OSError as e:
+                show_error_dialog(self, f"Delete failed: {e}")
+
+        dialog.connect("response", on_response)
+        dialog.present()

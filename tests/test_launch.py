@@ -15,6 +15,11 @@ def _fixture_runner(stdout: str, stderr: str = "", code: int = 0):
     return runner
 
 
+def _never_running():
+    """Test double for launch(running_checker=...) that asserts Sober isn't running."""
+    return False
+
+
 def test_parse_success_log():
     text = (FIXTURES / "vkbasalt-log-success.txt").read_text()
     loaded, errors = launch._parse_vkbasalt_log(text)
@@ -47,7 +52,11 @@ def test_parse_no_layer_log():
 
 def test_verify_success():
     log = (FIXTURES / "vkbasalt-log-success.txt").read_text()
-    result = launch.launch(verify=True, runner=_fixture_runner(log))
+    result = launch.launch(
+        verify=True,
+        runner=_fixture_runner(log),
+        running_checker=_never_running,
+    )
     assert result.mode == "verify"
     assert result.success is True
     assert result.vkbasalt_loaded is True
@@ -56,7 +65,11 @@ def test_verify_success():
 
 def test_verify_compile_error():
     log = (FIXTURES / "vkbasalt-log-compile-error.txt").read_text()
-    result = launch.launch(verify=True, runner=_fixture_runner(log))
+    result = launch.launch(
+        verify=True,
+        runner=_fixture_runner(log),
+        running_checker=_never_running,
+    )
     assert result.mode == "verify"
     assert result.success is False
     assert result.vkbasalt_loaded is True
@@ -65,7 +78,11 @@ def test_verify_compile_error():
 
 def test_verify_no_layer():
     log = (FIXTURES / "vkbasalt-log-no-layer.txt").read_text()
-    result = launch.launch(verify=True, runner=_fixture_runner(log))
+    result = launch.launch(
+        verify=True,
+        runner=_fixture_runner(log),
+        running_checker=_never_running,
+    )
     assert result.success is False
     assert result.vkbasalt_loaded is False
 
@@ -73,20 +90,28 @@ def test_verify_no_layer():
 def test_verify_nonzero_exit_fails():
     log = (FIXTURES / "vkbasalt-log-success.txt").read_text()
     result = launch.launch(
-        verify=True, runner=_fixture_runner(log, code=1)
+        verify=True,
+        runner=_fixture_runner(log, code=1),
+        running_checker=_never_running,
     )
     assert result.success is False
 
 
 def test_launch_normal_success():
-    result = launch.launch(runner=_fixture_runner("", code=0))
+    result = launch.launch(
+        runner=_fixture_runner("", code=0),
+        running_checker=_never_running,
+    )
     assert result.mode == "normal"
     assert result.success is True
     assert result.exit_code == 0
 
 
 def test_launch_normal_failure():
-    result = launch.launch(runner=_fixture_runner("boom", code=1))
+    result = launch.launch(
+        runner=_fixture_runner("boom", code=1),
+        running_checker=_never_running,
+    )
     assert result.mode == "normal"
     assert result.success is False
     assert result.exit_code == 1
@@ -96,7 +121,16 @@ def test_launch_missing_flatpak_raises():
     def runner(args):
         raise FileNotFoundError()
     with pytest.raises(launch.LaunchError):
-        launch.launch(runner=runner)
+        launch.launch(runner=runner, running_checker=_never_running)
+
+
+def test_launch_refuses_when_sober_running():
+    """Launch guard: raises LaunchError if Sober is already running."""
+    with pytest.raises(launch.LaunchError):
+        launch.launch(
+            runner=_fixture_runner("", code=0),
+            running_checker=lambda: True,
+        )
 
 
 class _FakeProc:
@@ -113,7 +147,10 @@ def test_launch_detached_running():
         return _FakeProc(pid=12345, exit_code=None)
 
     result = launch.launch(
-        detach=True, detached_runner=detached_runner, settle_seconds=0
+        detach=True,
+        detached_runner=detached_runner,
+        running_checker=_never_running,
+        settle_seconds=0,
     )
     assert result.mode == "detached"
     assert result.success is True
@@ -126,7 +163,10 @@ def test_launch_detached_immediate_failure():
         return _FakeProc(pid=9999, exit_code=1)
 
     result = launch.launch(
-        detach=True, detached_runner=detached_runner, settle_seconds=0
+        detach=True,
+        detached_runner=detached_runner,
+        running_checker=_never_running,
+        settle_seconds=0,
     )
     assert result.mode == "detached"
     assert result.success is False
