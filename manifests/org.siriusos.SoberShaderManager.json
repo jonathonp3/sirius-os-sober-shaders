@@ -1,0 +1,54 @@
+{
+  "app-id": "org.siriusos.SoberShaderManager",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "51",
+  "sdk": "org.gnome.Sdk",
+  "command": "sober-shader-manager",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--talk-name=org.freedesktop.Flatpak",
+    "--env=SOBER_SHADER_HOST_FLATPAK=1",
+    "--filesystem=~/.var/app/org.vinegarhq.Sober/config/vkBasalt:create",
+    "--filesystem=~/GShade-Shaders:ro"
+  ],
+  "modules": [
+    {
+      "name": "sober-shader-manager",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p /app/lib/sober-shader",
+        "cp -r core cli gui /app/lib/sober-shader/",
+        "mkdir -p /app/share/sober-shader/shaders",
+        "cp -r shaders/. /app/share/sober-shader/shaders/",
+        "install -Dm755 sober-shader-wrapper.sh /app/bin/sober-shader",
+        "install -Dm755 sober-shader-manager-wrapper.sh /app/bin/sober-shader-manager",
+        "install -Dm644 org.siriusos.SoberShaderManager.desktop /app/share/applications/org.siriusos.SoberShaderManager.desktop"
+      ],
+      "sources": [
+        {"type": "file", "path": "sober-shader-wrapper.sh"},
+        {"type": "file", "path": "sober-shader-manager-wrapper.sh"},
+        {"type": "file", "path": "org.siriusos.SoberShaderManager.desktop"},
+        {
+          "type": "dir",
+          "path": "/var/home/jonathon/sirius-os-sober-shaders",
+          "skip": [
+            ".venv",
+            ".git",
+            ".pytest_cache",
+            "tests",
+            "docs",
+            "manifests",
+            "scripts",
+            "flatpak-probe",
+            "__pycache__",
+            "*.pyc"
+          ]
+        }
+      ]
+    }
+  ]
+}

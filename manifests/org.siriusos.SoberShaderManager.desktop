@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Sober Shader Manager
+Comment=Manage and launch vkBasalt shader chains with Sober
+Exec=sober-shader-manager
+Icon=org.siriusos.SoberShaderManager
+Terminal=false
+Type=Application
+Categories=Game;Settings;
+Keywords=Roblox;Sober;vkBasalt;shader;ReShade;
+StartupNotify=true

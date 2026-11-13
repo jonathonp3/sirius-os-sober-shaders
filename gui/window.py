@@ -26,7 +26,9 @@ from gui import cli_bridge
 from gui.dialogs import show_error_dialog
 
 
-DEFAULT_SHADER_DIR = Path.home() / "GShade-Shaders" / "Shaders"
+GHSHADE_SHADER_DIR = Path.home() / "GShade-Shaders" / "Shaders"
+GHSHADE_TEXTURE_DIR = Path.home() / "GShade-Shaders" / "Textures"
+
 SHORTLIST = ["Deband", "Bloom", "Clarity", "Curves", "Vibrance"]
 
 # Short lowercase aliases for vkBasalt.conf effect keys. Using the shader's
@@ -65,6 +67,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._cas_enabled: bool = False
         self._cas_slider: Gtk.Scale | None = None
         self._active_config_parameters: dict[str, str] = {}
+        self._imported_names: set[str] = set()
 
         self._build_ui()
         self._refresh()
@@ -105,6 +108,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._fetch_btn = Gtk.Button(label="Fetch shaders")
         self._fetch_btn.connect("clicked", self._on_fetch_shaders)
         bottom.append(self._fetch_btn)
+
+        self._import_btn = Gtk.Button(label="Import shader…")
+        self._import_btn.connect("clicked", self._on_import_shader)
+        bottom.append(self._import_btn)
 
         toolbar.add_bottom_bar(bottom)
 
@@ -166,6 +173,7 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar.set_content(scroll)
         self.set_content(toolbar)
 
+
     # ---- data loading ----
 
     def _refresh(self) -> None:
@@ -179,7 +187,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             self._banner.set_revealed(False)
 
-        self._shaders = shader_mod.discover(DEFAULT_SHADER_DIR)
+        self._shaders = self._discover_all_shaders()
         self._populate_list()
         self._load_active_config()
 
@@ -189,16 +197,50 @@ class MainWindow(Adw.ApplicationWindow):
         self._selected.clear()
 
         by_name = {s.name: s for s in self._shaders}
+
+        # Default view: shortlist + anything the user explicitly imported.
+        visible: list[shader_mod.ShaderInfo] = []
+        seen: set[str] = set()
         for name in SHORTLIST:
             if name in by_name:
-                self._add_row(by_name[name])
+                visible.append(by_name[name])
+                seen.add(name)
+        for name in self._imported_names:
+            if name in by_name and name not in seen:
+                visible.append(by_name[name])
+                seen.add(name)
 
+        for s in visible:
+            self._add_row(s)
+
+        # "Show all" reveals the rest of the GShade set.
         if self._show_all_shaders:
             sep = Gtk.Separator()
             self._listbox.append(sep)
             for s in self._shaders:
-                if s.name not in SHORTLIST:
+                if s.name not in seen:
                     self._add_row(s)
+
+    def _discover_all_shaders(self) -> list[shader_mod.ShaderInfo]:
+        ...
+        """
+        Discover shaders from both the user's GShade clone and the sandbox
+        Shaders directory. The sandbox copy wins on name collisions so
+        imported/updated shaders take precedence.
+        """
+        by_name: dict[str, shader_mod.ShaderInfo] = {}
+
+        for info in shader_mod.discover(SANDBOX_SHADER_DIR):
+            by_name[info.name] = info
+
+        for info in shader_mod.discover(GHSHADE_SHADER_DIR):
+            if info.name not in by_name:
+                by_name[info.name] = info
+
+        # Drop imported names whose files were deleted from the sandbox.
+        self._imported_names &= set(by_name.keys())
+
+        return sorted(by_name.values(), key=lambda s: s.name)
 
     def _load_active_config(self) -> None:
         """
@@ -242,8 +284,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _add_row(self, s: shader_mod.ShaderInfo) -> None:
         missing = shader_mod.check_dependencies(
-            s, include_dir=DEFAULT_SHADER_DIR,
-            texture_dir=DEFAULT_SHADER_DIR.parent / "Textures",
+            s, include_dir=GHSHADE_SHADER_DIR,
+            texture_dir=GHSHADE_SHADER_DIR.parent / "Textures",
         )
 
         row = Adw.ActionRow(title=s.name)
@@ -462,3 +504,60 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             show_error_dialog(self, f"Fetch failed: {result.message}")
         return False
+
+    def _on_import_shader(self, _btn) -> None:
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Import shader")
+
+        filt = Gtk.FileFilter()
+        filt.set_name("ReShade FX shaders (*.fx)")
+        filt.add_pattern("*.fx")
+        dialog.set_default_filter(filt)
+
+        def done(dlg, result):
+            try:
+                gfile = dlg.open_finish(result)
+            except GLib.Error:
+                return  # user cancelled
+            if gfile is None:
+                return
+            self._import_shader_file(Path(gfile.get_path()))
+
+        dialog.open(self, None, done)
+
+    def _import_shader_file(self, src: Path) -> None:
+        """
+        Copy a .fx file and its sibling .fxh includes into the sandbox
+        Shaders directory so vkBasalt can read them.
+        """
+        if not src.exists() or src.suffix != ".fx":
+            show_error_dialog(self, f"Not a .fx file: {src}")
+            return
+
+        SANDBOX_SHADER_DIR.mkdir(parents=True, exist_ok=True)
+
+        copied = [src.name]
+        shutil.copy2(src, SANDBOX_SHADER_DIR / src.name)
+        self._imported_names.add(src.stem)
+
+        try:
+            info = shader_mod.parse_fx(src)
+            for inc in info.includes:
+                sib = src.parent / inc
+                if sib.exists():
+                    shutil.copy2(sib, SANDBOX_SHADER_DIR / inc)
+                    copied.append(inc)
+            SANDBOX_TEXTURE_DIR.mkdir(parents=True, exist_ok=True)
+            for tex in info.textures:
+                src_tex = GHSHADE_TEXTURE_DIR / tex
+                if src_tex.exists():
+                    shutil.copy2(src_tex, SANDBOX_TEXTURE_DIR / tex)
+                    copied.append(tex)
+        except Exception:
+            pass
+
+        self._banner.set_title(
+            f"Imported {', '.join(copied)} into the app's Shaders directory."
+        )
+        self._banner.set_revealed(True)
+        self._refresh()
