@@ -210,6 +210,14 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_css_class("dim-label")
 
         check = Gtk.CheckButton()
+        if missing:
+            # Don't let the user select a shader that will fail to compile.
+            # Apply would catch the failure and roll back, but preventing the
+            # selection is a better failure mode than a crash-and-restore.
+            check.set_sensitive(False)
+            check.set_tooltip_text(
+                "Missing dependencies:\n  " + "\n  ".join(missing)
+            )
         check.connect("toggled", self._on_shader_toggled, s)
         row.add_prefix(check)
         row.set_activatable_widget(check)
