@@ -37,6 +37,7 @@ jobs:
           flatpak-builder --user --disable-rofiles-fuse \
             --repo=deploy-repo \
             --gpg-sign=0A2552FEEB8D3E64C992C978129C066A187950B9 \
+            --default-branch=stable \
             --force-clean build-dir org.siriusos.SoberShaderManager.json || exit 1
 
           # 4. Sign the repository metadata
