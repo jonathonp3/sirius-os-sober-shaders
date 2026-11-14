@@ -90,7 +90,7 @@ so flatpak update picks up new builds.
 
 ---
 
-## Optional: run the validate-config command against the current config
+### Optional: run the validate-config command against the current config
 
 If you want to confirm the command works as documented before committing, run it:
 bash
