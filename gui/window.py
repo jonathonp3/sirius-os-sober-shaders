@@ -15,6 +15,7 @@ from gui import _gi_setup  # noqa: F401  (must run before gi.repository imports)
 
 import json
 import shutil
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
@@ -309,8 +310,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _add_row(self, s: shader_mod.ShaderInfo) -> None:
         missing = shader_mod.check_dependencies(
-            s, include_dir=GHSHADE_SHADER_DIR,
-            texture_dir=GHSHADE_SHADER_DIR.parent / "Textures",
+            s,
+            include_dir=s.path.parent,
+            texture_dir=s.path.parent.parent / "Textures",
         )
 
         row = Adw.ActionRow(title=s.name)
@@ -541,6 +543,36 @@ class MainWindow(Adw.ApplicationWindow):
         self._fetch_btn.set_label("Fetch shaders")
 
         if result.ok:
+            try:
+                SANDBOX_SHADER_DIR.mkdir(parents=True, exist_ok=True)
+                # The running sandbox's :ro mount of ~/GShade-Shaders doesn't
+                # reflect a directory created after launch (git clone ran on
+                # the host). Copy via flatpak-spawn --host, which runs on the
+                # host where the clone is visible, writing into the sandbox
+                # Shaders dir (writable via :create).
+                host_gshade = str(Path.home() / "GShade-Shaders" / "Shaders")
+                sandbox_dst = str(SANDBOX_SHADER_DIR)
+                subprocess.run(
+                    ["flatpak-spawn", "--host", "sh", "-c",
+                     f'cp -r "{host_gshade}/." "{sandbox_dst}/" 2>/dev/null'],
+                    capture_output=True, text=True, check=False,
+                )
+                # Copy the shipped framework files into the clone (the GShade
+                # repo doesn't ship them) and into the sandbox.
+                for name in ("ReShade.fxh", "ReShadeUI.fxh"):
+                    src = SHIPPED_SHADER_DIR / name
+                    if not src.exists():
+                        continue
+                    dst_sandbox = SANDBOX_SHADER_DIR / name
+                    if not dst_sandbox.exists():
+                        shutil.copy2(src, dst_sandbox)
+                    subprocess.run(
+                        ["flatpak-spawn", "--host", "cp",
+                         str(src), f"{host_gshade}/{name}"],
+                        capture_output=True, text=True, check=False,
+                    )
+            except OSError:
+                pass
             self._refresh()
             self._banner.set_title(
                 f"Shaders fetched to {result.dest}. Shader list refreshed."

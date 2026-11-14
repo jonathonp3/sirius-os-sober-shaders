@@ -114,20 +114,3 @@ def fetch(
         success=True,
         message=(result.stdout or "").strip(),
     )
-
-    # Clone
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    result = _run([*_git_cmd(), "clone", "--depth=1", repo_url, str(dest)], runner)
-    if result.returncode != 0:
-        return FetchResult(
-            action="failed",
-            dest=dest,
-            success=False,
-            message=(result.stderr or result.stdout or "").strip(),
-        )
-    return FetchResult(
-        action="cloned",
-        dest=dest,
-        success=True,
-        message=(result.stdout or "").strip(),
-    )
