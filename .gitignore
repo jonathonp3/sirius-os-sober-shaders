@@ -1,4 +1,13 @@
-.venv/
-__pycache__/
-*.pyc
-*:
+          "skip": [
+            ".venv",
+            ".git",
+            ".pytest_cache",
+            "tests",
+            "docs",
+            "manifests",
+            "scripts",
+            "build-dir",
+            "deploy-repo",
+            "*.pyc",
+            "__pycache__"
+          ]

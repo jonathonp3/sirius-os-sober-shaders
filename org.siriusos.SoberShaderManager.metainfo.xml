@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.siriusos.SoberShaderManager</id>
+  <name>Sober Shader Manager</name>
+  <summary>Manage and launch vkBasalt shader chains with Sober</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+
+  <description>
+    <p>
+      A launcher and config manager for running vkBasalt shader packs with
+      Sober (the Roblox Flatpak) on Fedora ostree desktops.
+    </p>
+    <p>
+      It detects vkBasalt compatibility, manages shader configurations,
+      and applies them with automatic rollback if a shader fails to load.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.siriusos.SoberShaderManager.desktop</launchable>
+
+  <url type="homepage">https://github.com/jonathonp3/sirius-os-sober-shaders</url>
+  <url type="vcs-browser">https://github.com/jonathonp3/sirius-os-sober-shaders</url>
+
+  <releases>
+    <release version="0.2.0" date="2026-11-13"/>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>

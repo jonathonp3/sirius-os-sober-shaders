@@ -26,24 +26,29 @@
         "cp -r shaders/. /app/share/sober-shader/shaders/",
         "install -Dm755 sober-shader-wrapper.sh /app/bin/sober-shader",
         "install -Dm755 sober-shader-manager-wrapper.sh /app/bin/sober-shader-manager",
-        "install -Dm644 org.siriusos.SoberShaderManager.desktop /app/share/applications/org.siriusos.SoberShaderManager.desktop"
+        "install -Dm644 org.siriusos.SoberShaderManager.desktop /app/share/applications/org.siriusos.SoberShaderManager.desktop",
+        "install -Dm644 sirius.png /app/share/icons/hicolor/512x512/apps/org.siriusos.SoberShaderManager.png",
+        "install -Dm644 org.siriusos.SoberShaderManager.metainfo.xml /app/share/metainfo/org.siriusos.SoberShaderManager.metainfo.xml"
       ],
       "sources": [
         {"type": "file", "path": "sober-shader-wrapper.sh"},
         {"type": "file", "path": "sober-shader-manager-wrapper.sh"},
         {"type": "file", "path": "org.siriusos.SoberShaderManager.desktop"},
+        {"type": "file", "path": "sirius.png"},
+        {"type": "file", "path": "org.siriusos.SoberShaderManager.metainfo.xml"},
         {
           "type": "dir",
-          "path": "/var/home/jonathon/sirius-os-sober-shaders",
+          "path": ".",
           "skip": [
             ".venv",
             ".git",
             ".pytest_cache",
             "tests",
             "docs",
-            "manifests",
             "scripts",
             "flatpak-probe",
+            "build-dir",
+            "deploy-repo",
             "__pycache__",
             "*.pyc"
           ]
