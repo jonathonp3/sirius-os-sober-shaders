@@ -36,7 +36,7 @@ GHSHADE_TEXTURE_DIR = Path.home() / "GShade-Shaders" / "Textures"
 # the discovery loop skips it.
 SHIPPED_SHADER_DIR = Path("/app/share/sober-shader/shaders")
 
-SHORTLIST = ["Deband", "Bloom", "Clarity", "Curves", "Vibrance"]
+SHORTLIST = ["Deband", "Clarity2", "Bloom", "Clarity", "Curves", "Vibrance"]
 
 # Short lowercase aliases for vkBasalt.conf effect keys. Using the shader's
 # file basename as the effect key causes a duplicate-key collision when the
@@ -47,6 +47,7 @@ SHADER_ALIASES = {
     "Deband": "dbd",
     "Bloom": "blm",
     "Clarity": "clr",
+    "Clarity2": "clr2",
     "Curves": "crv",
     "Vibrance": "vib",
     "CAS": "cas",
@@ -213,9 +214,22 @@ class MainWindow(Adw.ApplicationWindow):
             self._listbox.remove(row)
         self._selected.clear()
 
+        # Shaders currently in the active config should always be visible,
+        # even if they're not in SHORTLIST or _imported_names — otherwise
+        # reopening with an applied non-shortlist shader leaves its row
+        # invisible and _apply_selection has nothing to check.
+        active_names: set[str] = set()
+        active = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf"
+        if active.exists():
+            try:
+                cfg = config_mod.parse(active)
+                for alias, path_str in cfg.shader_paths.items():
+                    active_names.add(Path(path_str).stem)
+            except config_mod.ConfigError:
+                pass
+
         by_name = {s.name: s for s in self._shaders}
 
-        # Default view: shortlist + anything the user explicitly imported.
         visible: list[shader_mod.ShaderInfo] = []
         seen: set[str] = set()
         for name in SHORTLIST:
@@ -226,11 +240,14 @@ class MainWindow(Adw.ApplicationWindow):
             if name in by_name and name not in seen:
                 visible.append(by_name[name])
                 seen.add(name)
+        for name in active_names:
+            if name in by_name and name not in seen:
+                visible.append(by_name[name])
+                seen.add(name)
 
         for s in visible:
             self._add_row(s)
 
-        # "Show all" reveals the rest of the GShade set.
         if self._show_all_shaders:
             sep = Gtk.Separator()
             self._listbox.append(sep)
@@ -267,11 +284,34 @@ class MainWindow(Adw.ApplicationWindow):
             )
         except OSError:
             pass
+    def _apply_selection(self, names: set[str]) -> None:
+        """
+        Check the rows whose title is in `names`. Used after a list rebuild
+        to restore the selection: from the active config on startup, or from
+        the in-progress selection when toggling Show all.
 
+        Setting a Gtk.CheckButton active fires "toggled", which routes
+        through _on_shader_toggled and populates self._selected, so no
+        separate bookkeeping is needed here.
+        """
+        row = self._listbox.get_first_child()
+        while row is not None:
+            next_row = row.get_next_sibling()
+            if isinstance(row, Adw.ActionRow):
+                if row.get_title() in names:
+                    check = row.get_activatable_widget()
+                    if isinstance(check, Gtk.CheckButton):
+                        check.set_active(True)
+            row = next_row
+    
     def _load_active_config(self) -> None:
         """
         Read the active vkBasalt.conf and check the corresponding boxes,
         so reopening the GUI reflects what's currently applied.
+
+        Matching is done by shader *path* (the basename of each
+        `alias = /path/to/Shader.fx` line), not by alias. That way it works
+        for any shader, whether or not it has an entry in SHADER_ALIASES.
         """
         active = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf"
         if not active.exists():
@@ -282,23 +322,27 @@ class MainWindow(Adw.ApplicationWindow):
         except config_mod.ConfigError:
             return
 
-        # Stash parameter values so _add_slider can restore them when the
-        # toggled signal rebuilds the parameter UI.
         self._active_config_parameters = dict(cfg.parameters)
 
-        alias_to_name = {v: k for k, v in SHADER_ALIASES.items()}
-        selected_names = {alias_to_name.get(alias, alias) for alias in cfg.effects}
+        # Map effect alias -> shader stem by reading the shader paths.
+        # `clar = .../Clarity2.fx` -> alias_to_name["clar"] = "Clarity2".
+        alias_to_name: dict[str, str] = {}
+        for alias, path_str in cfg.shader_paths.items():
+            alias_to_name[alias] = Path(path_str).stem
 
-        row = self._listbox.get_first_child()
-        while row is not None:
-            next_row = row.get_next_sibling()
-            if isinstance(row, Adw.ActionRow):
-                name = row.get_title()
-                if name in selected_names:
-                    check = row.get_activatable_widget()
-                    if isinstance(check, Gtk.CheckButton):
-                        check.set_active(True)
-            row = next_row
+        # Fall back to the static map for aliases without a shader path
+        # (e.g. built-in effects like "cas" that have no .fx file).
+        static_reverse = {v: k for k, v in SHADER_ALIASES.items()}
+        selected_names: set[str] = set()
+        for alias in cfg.effects:
+            if alias in alias_to_name:
+                selected_names.add(alias_to_name[alias])
+            elif alias in static_reverse:
+                selected_names.add(static_reverse[alias])
+            else:
+                selected_names.add(alias)
+
+        self._apply_selection(selected_names)
 
         if "cas" in cfg.effects:
             self._cas_check.set_active(True)
@@ -347,7 +391,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_show_all_toggled(self, switch, _pspec) -> None:
         self._show_all_shaders = switch.get_active()
+        # The rebuild in _populate_list clears self._selected and constructs
+        # fresh unchecked rows. Toggling Show all is a view filter, not a
+        # state change, so preserve whatever the user had selected.
+        previously_selected = set(self._selected.keys())
         self._populate_list()
+        self._apply_selection(previously_selected)
 
     def _on_cas_toggled(self, check: Gtk.CheckButton) -> None:
         self._cas_enabled = check.get_active()
@@ -538,6 +587,16 @@ class MainWindow(Adw.ApplicationWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_fetch_shaders(self, _btn) -> None:
+        self._fetch_btn.set_sensitive(False)
+        self._fetch_btn.set_label("Fetching…")
+
+        def worker():
+            result = cli_bridge.fetch_shaders()
+            GLib.idle_add(self._fetch_done, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _fetch_done(self, result: cli_bridge.FetchResult) -> bool:
         self._fetch_btn.set_sensitive(True)
         self._fetch_btn.set_label("Fetch shaders")
@@ -545,30 +604,60 @@ class MainWindow(Adw.ApplicationWindow):
         if result.ok:
             try:
                 SANDBOX_SHADER_DIR.mkdir(parents=True, exist_ok=True)
-                # The running sandbox's :ro mount of ~/GShade-Shaders doesn't
-                # reflect a directory created after launch (git clone ran on
-                # the host). Copy via flatpak-spawn --host, which runs on the
-                # host where the clone is visible, writing into the sandbox
-                # Shaders dir (writable via :create).
-                host_gshade = str(Path.home() / "GShade-Shaders" / "Shaders")
-                sandbox_dst = str(SANDBOX_SHADER_DIR)
+                SANDBOX_TEXTURE_DIR.mkdir(parents=True, exist_ok=True)
+
+                host_gshade_shaders = str(Path.home() / "GShade-Shaders" / "Shaders")
+                host_gshade_textures = str(Path.home() / "GShade-Shaders" / "Textures")
+                host_reshade_shaders = str(Path.home() / "reshade-shaders" / "Shaders")
+                sandbox_shaders = str(SANDBOX_SHADER_DIR)
+                sandbox_textures = str(SANDBOX_TEXTURE_DIR)
+
+                # 1. Copy the GShade .fx/.fxh files into the sandbox Shaders
+                #    dir. The running sandbox's :ro mount of ~/GShade-Shaders
+                #    doesn't reflect a directory cloned after launch, so go
+                #    via flatpak-spawn --host, which runs on the host where
+                #    the clone is visible, writing into the sandbox Shaders
+                #    dir (writable via :create).
                 subprocess.run(
                     ["flatpak-spawn", "--host", "sh", "-c",
-                     f'cp -r "{host_gshade}/." "{sandbox_dst}/" 2>/dev/null'],
+                     f'cp -r "{host_gshade_shaders}/." "{sandbox_shaders}/" 2>/dev/null'],
                     capture_output=True, text=True, check=False,
                 )
-                # Copy the shipped framework files into the clone (the GShade
-                # repo doesn't ship them) and into the sandbox.
-                for name in ("ReShade.fxh", "ReShadeUI.fxh"):
-                    src = SHIPPED_SHADER_DIR / name
-                    if not src.exists():
-                        continue
-                    dst_sandbox = SANDBOX_SHADER_DIR / name
-                    if not dst_sandbox.exists():
-                        shutil.copy2(src, dst_sandbox)
+
+                # 2. Copy the GShade Textures into the sandbox Textures dir.
+                #    Without this, every shader that references any texture
+                #    grays out because the sandbox can't see the clone's
+                #    Textures directory.
+                subprocess.run(
+                    ["flatpak-spawn", "--host", "sh", "-c",
+                     f'cp -r "{host_gshade_textures}/." "{sandbox_textures}/" 2>/dev/null'],
+                    capture_output=True, text=True, check=False,
+                )
+
+                # 3. Copy the ReShade framework headers from the
+                #    reshade-shaders clone (fetched at runtime — BSD
+                #    3-Clause, not bundled) into both ~/GShade-Shaders/Shaders/
+                #    and the sandbox Shaders dir, so both the running session
+                #    and the next launch's discovery see them.
+                #
+                #    Two separate `cp` calls per file: `cp src dest1 dest2` is
+                #    invalid (cp treats the last arg as a destination directory
+                #    and errors), which is why this previously failed silently
+                #    with 2>/dev/null. `flatpak-spawn --host cp` with a simple
+                #    arg list avoids the shell entirely.
+                for name in (
+                    "ReShade.fxh", "ReShadeUI.fxh", "Blending.fxh",
+                    "Macros.fxh", "TriDither.fxh", "DrawText.fxh",
+                ):
+                    src = f"{host_reshade_shaders}/{name}"
                     subprocess.run(
                         ["flatpak-spawn", "--host", "cp",
-                         str(src), f"{host_gshade}/{name}"],
+                         src, f"{sandbox_shaders}/{name}"],
+                        capture_output=True, text=True, check=False,
+                    )
+                    subprocess.run(
+                        ["flatpak-spawn", "--host", "cp",
+                         src, f"{host_gshade_shaders}/{name}"],
                         capture_output=True, text=True, check=False,
                     )
             except OSError:
