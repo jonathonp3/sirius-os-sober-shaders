@@ -1,0 +1,66 @@
+name: Build and Release Sober Shader Manager
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  flatpak:
+    name: "Build and Release"
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install rsync on host
+      run: sudo apt update && sudo apt install -y rsync
+
+    - name: Flatpak Build Environment
+      uses: addnab/docker-run-action@v3
+      with:
+        image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+        options: -v ${{ github.workspace }}:/workspace --privileged
+        run: |
+          cd /workspace
+
+          # 1. Import GPG key
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+          # 2. Setup runtimes
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Sdk//51 org.gnome.Platform//51
+
+          # 3. Build and sign
+          flatpak-builder --user --disable-rofiles-fuse \
+            --repo=deploy-repo \
+            --gpg-sign=0A2552FEEB8D3E64C992C978129C066A187950B9 \
+            --force-clean build-dir manifests/org.siriusos.SoberShaderManager.json || exit 1
+
+          # 4. Sign the repository metadata
+          flatpak build-update-repo --gpg-sign=0A2552FEEB8D3E64C992C978129C066A187950B9 deploy-repo
+
+          # 5. Create the bundle
+          flatpak build-bundle deploy-repo sober-shader-manager-stable.flatpak org.siriusos.SoberShaderManager stable
+
+          # 6. Permissions for the release/pages steps
+          ls -R deploy-repo
+          chmod -R 777 /workspace/deploy-repo
+          chmod 666 /workspace/sober-shader-manager-stable.flatpak
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: latest-build
+        name: "Sober Shader Manager - Latest"
+        files: sober-shader-manager-stable.flatpak
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Deploy to GitHub Pages
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+        folder: deploy-repo
+        branch: gh-pages
