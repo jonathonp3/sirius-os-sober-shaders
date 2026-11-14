@@ -44,13 +44,50 @@ SHORTLIST = ["Deband", "Clarity2", "Bloom", "Clarity", "Curves", "Vibrance"]
 # named Vibrance). The alias keeps the shader path key distinct from any
 # uniform name.
 SHADER_ALIASES = {
-    "Deband": "dbd",
-    "Bloom": "blm",
-    "Clarity": "clr",
-    "Clarity2": "clr2",
-    "Curves": "crv",
-    "Vibrance": "vib",
-    "CAS": "cas",
+    # Shortlist
+    "Deband":     "dbd",
+    "Clarity":    "clr",
+    "Clarity2":   "clr2",
+    "Bloom":      "blm",
+    "Curves":     "crv",
+    "Vibrance":   "vib",
+    "CA":         "ca",
+    "Censor":     "cens",
+    "CAS":        "cas",
+
+    # Spotlight family (1-5): same effect, different defaults. Short keys
+    # keep the config readable; the full-name fallback would also work.
+    "Spotlight":  "spot1",
+    "Spotlight2": "spot2",
+    "Spotlight3": "spot3",
+    "Spotlight4": "spot4",
+    "Spotlight5": "spot5",
+
+    # StageDepth family (1-5)
+    "StageDepth":  "stag1",
+    "StageDepth2": "stag2",
+    "StageDepth3": "stag3",
+    "StageDepth4": "stag4",
+    "StageDepth5": "stag5",
+
+    # Layer family (1-5)
+    "Layer":  "lay1",
+    "Layer2": "lay2",
+    "Layer3": "lay3",
+    "Layer4": "lay4",
+    "Layer5": "lay5",
+}
+
+# Shaders that load in vkBasalt without errors but render incorrectly —
+# typically a silent black screen. Layer.fx samples an external texture
+# and blends it over the frame; when the texture is missing or resolves
+# to black, the whole screen goes black with no vkBasalt err line.
+# Hidden from the GUI so the user can't select them.
+#
+# Layer 1-5 are the only known entries. If a new shader loads without an
+# err line but black-screens the game, add it here and note why.
+VKBASALT_BLOCKLIST = {
+    "Layer", "Layer2", "Layer3", "Layer4", "Layer5",
 }
 
 # Sandbox-visible directories inside Sober's Flatpak.
@@ -246,13 +283,15 @@ class MainWindow(Adw.ApplicationWindow):
                 seen.add(name)
 
         for s in visible:
+            if s.name in VKBASALT_BLOCKLIST:
+                continue
             self._add_row(s)
 
         if self._show_all_shaders:
             sep = Gtk.Separator()
             self._listbox.append(sep)
             for s in self._shaders:
-                if s.name not in seen:
+                if s.name not in seen and s.name not in VKBASALT_BLOCKLIST:
                     self._add_row(s)
 
     def _discover_all_shaders(self) -> list[shader_mod.ShaderInfo]:
@@ -262,6 +301,11 @@ class MainWindow(Adw.ApplicationWindow):
         Shaders directory (imported). The first occurrence of a name wins,
         so the shipped Deband beats a GShade Deband, which beats an
         imported Deband.
+
+        Blocklisted shaders are skipped entirely. They load in vkBasalt
+        without errors but render incorrectly (usually a silent black
+        screen), so showing them in the GUI would let the user select a
+        shader that breaks the game.
         """
         by_name: dict[str, shader_mod.ShaderInfo] = {}
 
@@ -269,9 +313,12 @@ class MainWindow(Adw.ApplicationWindow):
             if not directory.exists():
                 continue
             for info in shader_mod.discover(directory):
+                if info.name in VKBASALT_BLOCKLIST:
+                    continue
                 by_name.setdefault(info.name, info)
 
-        # Drop imported names whose files were deleted from the sandbox.
+        # Drop imported names whose files were deleted from the sandbox,
+        # and any that are now blocklisted.
         self._imported_names &= set(by_name.keys())
         self._save_imported_names()
         return sorted(by_name.values(), key=lambda s: s.name)
@@ -474,8 +521,31 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- actions ----
 
     def _alias(self, name: str) -> str:
-        """Short lowercase alias for a shader, used as the effect key in vkBasalt.conf."""
-        return SHADER_ALIASES.get(name, name.lower()[:4])
+        """
+        Effect alias for a shader, used as the config key.
+
+        Prefer the curated SHADER_ALIASES map. Fall back to the full
+        lowercase alphanumeric name, which is unique by construction:
+        Spotlight -> spotlight, Spotlight2 -> spotlight2, StageDepth ->
+        stagedepth, StageDepth2 -> stagedepth2.
+
+        The old fallback was name.lower()[:4], which truncated collisions
+        (Spotlight/Spotlight2/.../Spotlight5 all became 'spot',
+        StageDepth 1-5 all became 'stag', the whole Layer family became
+        'laye', and so on). Selecting two shaders from the same family
+        produced a config with duplicate keys, which parse() rejected
+        with "duplicate key 'spot'".
+        """
+        if name in SHADER_ALIASES:
+            return SHADER_ALIASES[name]
+        alias = "".join(c for c in name.lower() if c.isalnum())
+        if not alias:
+            alias = "shader"
+        # Guard against colliding with an explicit SHADER_ALIASES value
+        # (e.g. if some future shader's full name equals a curated key).
+        if alias in SHADER_ALIASES.values():
+            alias = f"{alias}_fx"
+        return alias
 
     def _collect_config(self) -> config_mod.VkBasaltConfig:
         active = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf"
@@ -502,7 +572,19 @@ class MainWindow(Adw.ApplicationWindow):
         if self._cas_enabled:
             insert_at = 2 if len(ordered) >= 2 else len(ordered)
             ordered.insert(insert_at, "cas")
-        base.effects = ordered
+
+        # Belt-and-braces: with the fixed _alias, every shader gets a
+        # distinct key, but if a future addition ever reintroduces a
+        # collision, drop the duplicate rather than writing a config that
+        # parse() will reject. The first occurrence wins.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for alias in ordered:
+            if alias in seen:
+                continue
+            seen.add(alias)
+            deduped.append(alias)
+        base.effects = deduped
         base.shader_paths = {
             self._alias(name): str(self._sync_shader_to_sandbox(s))
             for name, s in self._selected.items()
