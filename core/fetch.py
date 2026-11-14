@@ -11,6 +11,7 @@ don't permit redistribution (see docs/SHADERS.md).
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,13 +38,23 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 def _default_runner(args: list[str]) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(args, capture_output=True, text=True, check=False)
 
-
 def _run(args: list[str], runner: Runner) -> "subprocess.CompletedProcess[str]":
     try:
         return runner(args)
     except FileNotFoundError as e:
         raise FetchError(f"`{args[0]}` not found in PATH") from e
 
+def _git_cmd() -> list[str]:
+    """
+    Return the base command for invoking git.
+
+    Inside the Flatpak sandbox (SOBER_SHADER_HOST_FLATPAK=1), git isn't on
+    PATH; it has to be reached via `flatpak-spawn --host`. On the host
+    (dev, CLI, tests), the direct `git` command is used.
+    """
+    if os.environ.get("SOBER_SHADER_HOST_FLATPAK"):
+        return ["flatpak-spawn", "--host", "git"]
+    return ["git"]
 
 def fetch(
     dest: Path,
@@ -72,7 +83,7 @@ def fetch(
                     f"{dest} already exists. Use --update to refresh."
                 ),
             )
-        result = _run(["git", "-C", str(dest), "pull", "--ff-only"], runner)
+        result = _run([*_git_cmd(), "-C", str(dest), "pull", "--ff-only"], runner)
         if result.returncode != 0:
             return FetchResult(
                 action="failed",
@@ -89,7 +100,24 @@ def fetch(
 
     # Clone
     dest.parent.mkdir(parents=True, exist_ok=True)
-    result = _run(["git", "clone", "--depth=1", repo_url, str(dest)], runner)
+    result = _run([*_git_cmd(), "clone", "--depth=1", repo_url, str(dest)], runner)
+    if result.returncode != 0:
+        return FetchResult(
+            action="failed",
+            dest=dest,
+            success=False,
+            message=(result.stderr or result.stdout or "").strip(),
+        )
+    return FetchResult(
+        action="cloned",
+        dest=dest,
+        success=True,
+        message=(result.stdout or "").strip(),
+    )
+
+    # Clone
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    result = _run([*_git_cmd(), "clone", "--depth=1", repo_url, str(dest)], runner)
     if result.returncode != 0:
         return FetchResult(
             action="failed",

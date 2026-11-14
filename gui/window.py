@@ -30,6 +30,11 @@ from gui.dialogs import show_error_dialog
 GHSHADE_SHADER_DIR = Path.home() / "GShade-Shaders" / "Shaders"
 GHSHADE_TEXTURE_DIR = Path.home() / "GShade-Shaders" / "Textures"
 
+# Shipped shaders, installed by the Flatpak manifest at
+# /app/share/sober-shader/shaders/. On the host this doesn't exist, so
+# the discovery loop skips it.
+SHIPPED_SHADER_DIR = Path("/app/share/sober-shader/shaders")
+
 SHORTLIST = ["Deband", "Bloom", "Clarity", "Curves", "Vibrance"]
 
 # Short lowercase aliases for vkBasalt.conf effect keys. Using the shader's
@@ -233,20 +238,20 @@ class MainWindow(Adw.ApplicationWindow):
                     self._add_row(s)
 
     def _discover_all_shaders(self) -> list[shader_mod.ShaderInfo]:
-        ...
         """
-        Discover shaders from both the user's GShade clone and the sandbox
-        Shaders directory. The sandbox copy wins on name collisions so
-        imported/updated shaders take precedence.
+        Discover shaders from three locations, in priority order:
+        shipped (Flatpak only), the user's GShade clone, and the sandbox
+        Shaders directory (imported). The first occurrence of a name wins,
+        so the shipped Deband beats a GShade Deband, which beats an
+        imported Deband.
         """
         by_name: dict[str, shader_mod.ShaderInfo] = {}
 
-        for info in shader_mod.discover(SANDBOX_SHADER_DIR):
-            by_name[info.name] = info
-
-        for info in shader_mod.discover(GHSHADE_SHADER_DIR):
-            if info.name not in by_name:
-                by_name[info.name] = info
+        for directory in (SHIPPED_SHADER_DIR, GHSHADE_SHADER_DIR, SANDBOX_SHADER_DIR):
+            if not directory.exists():
+                continue
+            for info in shader_mod.discover(directory):
+                by_name.setdefault(info.name, info)
 
         # Drop imported names whose files were deleted from the sandbox.
         self._imported_names &= set(by_name.keys())
@@ -594,14 +599,19 @@ class MainWindow(Adw.ApplicationWindow):
                 if src_tex.exists():
                     shutil.copy2(src_tex, SANDBOX_TEXTURE_DIR / tex)
                     copied.append(tex)
-        except Exception:
-            pass
+        except Exception as e:
+            # Include/texture copy is best-effort; the .fx itself is
+            # imported above, so a missing dependency shows as a disabled
+            # checkbox rather than a silent failure.
+            copied.append(f"(partial: {e})")
 
         self._refresh()
         self._banner.set_title(
             f"Imported {', '.join(copied)} into the app's Shaders directory."
         )
         self._banner.set_revealed(True)
+        
+        
 
     def _on_delete_shader(self, _btn, s: shader_mod.ShaderInfo) -> None:
         sandbox_path = SANDBOX_SHADER_DIR / s.path.name
