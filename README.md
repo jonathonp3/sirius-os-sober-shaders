@@ -1,4 +1,3 @@
-
 # Sober Shader Manager
 
 A GTK4 GUI and CLI for managing vkBasalt shader chains for
@@ -32,16 +31,7 @@ If you don't have it yet, install it first:
 
 ```bash
 flatpak install flathub org.vinegarhq.Sober
-
-## Install
-
-Requires [Sober](https://github.com/VinegarHQ/Sober) to be installed.
-If you don't have it yet, install it first:
-
-```bash
-flatpak install flathub org.vinegarhq.Sober
 ```
-
 Then install the shader manager from the project's Flatpak remote:
 
 ```bash
@@ -49,10 +39,9 @@ Then install the shader manager from the project's Flatpak remote:
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
 # 2. Install the vkBasalt extension. The branch (26.08 here) must match
-# the VulkanLayer version declared by Sober's runtime. To find yours:
-flatpak info --show-metadata org.gnome.Platform//51 | grep -A2 VulkanLayer
-
-# The app's `check` command reports the required branch too.
+#    the VulkanLayer version declared by Sober's runtime. To find yours:
+#      flatpak info --show-metadata org.gnome.Platform//51 | grep -A2 VulkanLayer
+#    The app's `check` command reports the required branch too.
 flatpak install -y flathub org.freedesktop.Platform.VulkanLayer.vkBasalt//26.08
 
 # 3. Fetch the remote's signing key
@@ -69,39 +58,29 @@ flatpak install --system sirius-os-sober-shaders org.siriusos.SoberShaderManager
 ```
 
 Then run:
+
 ```bash
 flatpak run org.siriusos.SoberShaderManager
 ```
 
 Or use the CLI:
+
 ```bash
 flatpak run --command=sober-shader org.siriusos.SoberShaderManager check
 flatpak run --command=sober-shader org.siriusos.SoberShaderManager status
 flatpak run --command=sober-shader org.siriusos.SoberShaderManager apply my.conf --detach
 ```
 
-Updating
+---
+
+## Updating
+
 ```bash
 flatpak update --system org.siriusos.SoberShaderManager
 ```
 
-The project's CI publishes to the stable branch on each push to main,
-so flatpak update picks up new builds.
-
----
-
-### Optional: run the validate-config command against the current config
-
-If you want to confirm the command works as documented before committing, run it:
-bash
-
-```bash
-flatpak run --command=sober-shader org.siriusos.SoberShaderManager validate-config \
-    ~/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
-echo "exit: $?"
-```
-
-Expected: `Validation: OK`, exit 0. If it fails, the doc's claim ("Exit 0 means the config is valid") is still true, but the current config has a problem worth that is worth checking
+The project's CI publishes to the `stable` branch on each push to `main`,
+so `flatpak update` picks up new builds.
 
 ---
 
@@ -118,9 +97,6 @@ flatpak run org.flatpak.Builder --user --force-clean --install \
 
 ## The GShade upstream has shrunk
 
-
-The GShade upstream has shrunk
-
 This matters for what the app can do on a fresh install.
 
 The current `Mortalitas/GShade-Shaders` repository ships ~65 shaders and 5
@@ -130,18 +106,18 @@ most of the texture assets. Those are no longer in the upstream repo.
 
 ---
 
-### Consequences:
+## Consequences:
 
 - Fetch clones the current reduced set. On a clean machine, about
-63/65 shaders are selectable; the rest gray out on missing textures.
+  63/65 shaders are selectable; the rest gray out on missing textures.
 
 - The full set is preserved locally. If you have a
-`~/GShade-Shaders-backup/` directory, `scripts/seed-shaders.sh` copies it
-into `~/GShade-Shaders/` and the Sober sandbox. See Backups.
+ `~/GShade-Shaders-backup/` directory, `scripts/seed-shaders.sh` copies it
+  into `~/GShade-Shaders/` and the Sober sandbox. See Backups.
 
 - Fetch is not the recovery path for the full set. It only rebuilds
-the reduced clone. The seed script and the tar snapshot are the recovery
-path.
+  the reduced clone. The seed script and the tar snapshot are the recovery
+  path.
 
 If you're installing on a fresh machine and want the full set, you need a
 copy of the backup. The repo does not include it (the shader licenses don't
@@ -153,26 +129,146 @@ permit redistribution).
 
 Two kinds of shaders may not work in vkBasalt even though they load:
 
-    Missing dependencies. The reduced clone's Textures/ doesn't have
-    everything the shaders reference. check_dependencies grays out any
-    shader whose includes or textures are missing, with a tooltip naming
-    what's absent. On a fully seeded profile, 204/207 are selectable;
-    CRTGeomMOD, DOF, and MartyMcFlyDOF gray out on genuinely missing
-    textures (bezel artwork, mcmask.png).
+- Missing dependencies. The reduced clone's `Textures/` doesn't have
+  everything the shaders reference. `check_dependencies` grays out any
+  shader whose includes or textures are missing, with a tooltip naming
+  what's absent. On a fully seeded profile, 204/207 are selectable;
+  CRTGeomMOD, DOF, and MartyMcFlyDOF gray out on genuinely missing
+  textures (bezel artwork, `mcmask.png`).
 
-    Silent black screens. Some shaders load without a vkBasalt error but
-    render a black frame. Layer.fx and Layer2–Layer5 are the known
-    offenders: they sample an external texture and blend it over the whole
-    screen, and in this setup the blend produces black with no log line. The
-    app has a VKBASALT_BLOCKLIST in gui/window.py that hides these from
-    the GUI. Add to it if a new shader misbehaves.
+- Silent black screens. Some shaders load without a vkBasalt error but
+  render a black frame. `Layer.fx` and `Layer2–Layer5 `are the known
+  offenders: they sample an external texture and blend it over the whole
+  screen, and in this setup the blend produces black with no log line. The
+  app has a `VKBASALT_BLOCKLIST` in `gui/window.py` that hides these from
+  the GUI. Add to it if a new shader misbehaves.
 
+---
+
+## Presets
+
+The `presets/` directory ships ready-to-use shader chains:
+
+- `clear.conf` — sharp, neutral image:
+  Deband → Bloom → CAS → Clarity → Curves → Vibrance.
+
+Of these, **Deband ships with the app and CAS is built into vkBasalt** —
+both work on a fresh install with no Fetch. The other four (Bloom,
+Clarity, Curves, Vibrance) come from the full GShade/ReShade set that is
+no longer in the upstream repo. They are present if you have a fully
+seeded profile (see [Backups](#backups)) or have imported them from
+another source (see [Importing shaders from other sources](#importing-shaders-from-other-sources)).
+
+On a fresh install with only the reduced Fetch clone, `clear.conf`
+resolves Deband and CAS; the other four are missing from the sandbox,
+and the preset's path lines for them point at files that don't exist.
+
+To get the full chain working:
+
+1. Seed from a backup:
+   `scripts/seed-shaders.sh --backup /path/to/GShade-Shaders-backup`
+2. Or import the individual shaders:
+   `python3 scripts/import-shaders.py /path/to/pack`
+3. Then validate: `validate-config presets/clear.conf` should exit 0.
+
+### Validating a preset
+
+The preset hardcodes `/var/home/jonathon/` in its path lines. The GUI
+rewrites these to your home directory on load, so the preset works for any
+user. The CLI's `validate-config` checks the paths as written, so on a
+machine where your username isn't `jonathon`, rewrite a copy first:
+
+```bash
+sed "s|/var/home/jonathon|$HOME|g" presets/clear.conf > /tmp/clear.conf
+flatpak run --command=sober-shader org.siriusos.SoberShaderManager \
+    validate-config /tmp/clear.conf
+echo "exit: $?"
+```
+
+---
+
+## Backups
+
+The full shader set (~207 shaders, ~83 textures) is preserved in three
+places:
+
+1. `~/GShade-Shaders-backup/` — the original backup, the seed script's
+   source.
+
+2. `~/GShade-Shaders-full-YYYYMMDD.tar.gz` — a snapshot tarball written by
+    scripts/seed-shaders.sh after each seed (~43 MB).
+
+3. `~/.var/app/org.vinegarhq.Sober/config/vkBasalt/{Shaders,Textures}/` —
+    the sandbox copies vkBasalt reads at runtime.
+
+Restore from a tarball:
+
+```bash
+scripts/restore-shaders.sh /path/to/GShade-Shaders-full-YYYYMMDD.tar.gz
+```
+
+Seed from a backup directory:
+
+```bash
+scripts/seed-shaders.sh --backup /path/to/GShade-Shaders-backup
+```
+
+Both are idempotent. `--dry-run` previews; `--force` overwrites
+unconditionally. See [scripts/README.md](scripts/README.md) for the
+details, including the shared-backup distribution model for multi-user
+machines.
+
+The tar should be copied off-machine (USB drive, another host, or a private
+Git release) — the on-disk copies don't survive disk failure.
+
+---
+
+## Importing shaders from other sources
+
+`Fetch` clones the GShade and ReShade repos. If you have shaders from
+another source — a ReShade forum post, a GitHub release, a friend's
+pack — put them in a directory with this layout:
+
+```text
+my-shader-pack/
+├── FancyShader.fx
+├── FancyShader.fxh
+├── ReShade.fxh           (optional; framework headers)
+└── Textures/
+    ├── dirt.png
+    └── noise.png
+```
+
+Then import them into the sandbox:
+```bash
+python3 scripts/import-shaders.py ~/Downloads/my-shader-pack
+```
+
+The script copies `.fx/.fxh` files to the sandbox `Shaders/` directory
+and `Textures/*` to `Textures/`, then validates each imported shader's
+dependencies against the sandbox contents. The report says which shaders
+will load and which will gray out in the GUI, with the missing filenames
+for the latter.
+
+`--dry-run` previews the copy and the validation without touching the
+sandbox. `--force` overwrites existing files; by default only files that
+are new or newer than what's in the sandbox are copied, so re-importing
+the same pack is a no-op.
+
+Run `Fetch` at least once before importing: framework headers like
+`ReShade.fxh` are needed for most shaders to compile, and Fetch is what
+puts them in the sandbox. Without them, every imported shader will report
+a missing `ReShade.fxh` include.
+
+See [scripts/README.md](scripts/README.md) for the full import workflow,
+including `--dry-run` and `--force`.
 ---
 
 ## Configuration
 
-The app writes `~/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf`
+The app writes ~/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
 using the standard vkBasalt format:
+
 ```ini
 
 effects = dbd:blm:cas:clr:crv:vib
@@ -190,11 +286,33 @@ depthCapture = off
 enableOnLaunch = True
 ```
 
-Effect aliases (`dbd`, `blm`, …) are short keys chosen to avoid collisions
-with uniform names. The app's `SHADER_ALIASES` map covers the common ones;
+Effect aliases `(dbd, blm, …) ` are short keys chosen to avoid collisions
+with uniform names. The app's SHADER_ALIASES map covers the common ones;
 anything not in the map falls back to its full lowercase alphanumeric name,
 which is unique by construction. The matching logic and the config format
-are documented in `docs/Applied Shaders.md`.  
+are documented in [docs/Applied-Shaders.md](docs/Applied-Shaders.md).
+
+---
+
+## Validating a config
+
+`validate-config` checks a vkBasalt.conf for structural and
+parameter-name errors without applying it:
+
+```bash
+flatpak run --command=sober-shader org.siriusos.SoberShaderManager \
+    validate-config ~/.var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf
+```
+
+Exit 0 means the config is valid: every effect in `effects` has a
+matching `alias = /path/to/Shader.fx` line, no key appears twice, and
+the parameter names match uniforms in the referenced shaders. Exit 1
+prints the specific errors.
+
+Useful after hand-editing the config, or to diagnose why an `apply`
+failed. apply runs the same validation internally before writing, so
+`validate-config` is mainly a standalone check for the current config
+or a candidate one.
 
 ---
 
@@ -213,31 +331,28 @@ required.
 ## License
 
 This project (the CLI, GUI, and core modules in this repository) is
-licensed under the MIT License. See LICENSE.
+licensed under the MIT License. See [LICENSE](LICENSE).
 
-The shader files and textures it fetches at runtime are not part of this
+The shader files and textures it fetches at runtime are **not** part of this
 project and are not redistributed by it:
 
-- ReShade framework (ReShade.fxh, ReShadeUI.fxh, Blending.fxh,
-Macros.fxh, TriDither.fxh, DrawText.fxh) is fetched from
-crosire/reshade-shaders
-under the BSD 3-Clause License.
-
-- GShade shaders are fetched from
-Mortalitas/GShade-Shaders.
-Each shader file carries its own license; the GShade repository documents
-these separately.
-
-- Sober (the Flatpak this app configures) is a separate project with
-its own license.
+- **ReShade framework** (`ReShade.fxh`, `ReShadeUI.fxh`, `Blending.fxh`,
+  `Macros.fxh`, `TriDither.fxh`, `DrawText.fxh`) is fetched from
+  [crosire/reshade-shaders](https://github.com/crosire/reshade-shaders)
+  under the BSD 3-Clause License.
+- **GShade shaders** are fetched from
+  [Mortalitas/GShade-Shaders](https://github.com/Mortalitas/GShade-Shaders).
+  Each shader file carries its own license; the GShade repository documents
+  these separately.
+- **Sober** (the Flatpak this app configures) is a separate project with
+  its own license.
 
 If you build a distributable bundle (e.g. a Flatpak) from this repository,
 do not include fetched shaders or textures in it. The app fetches them at
 runtime on the user's machine for exactly this reason.
 
 The Flatpak bundles the shipped `Deband.fx`, `ReShade.fxh`, and
-`ReShadeUI.fxh` (installed to /app/share/sober-shader/shaders/). Those
+`ReShadeUI.fxh` (installed to `/app/share/sober-shader/shaders/`). Those
 three files fall under their respective upstream licenses; they are
 included so the app works offline before Fetch, not redistributed for
 their own sake.
-
