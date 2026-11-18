@@ -174,6 +174,15 @@ def cmd_import_shaders(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
+    verify_requested = args.verify or args.verify_each
+    if verify_requested and launch_mod._sober_running():
+        message = "Sober is running; close it before verifying"
+        if args.json:
+            print(json.dumps({"source": str(source), "error": message}))
+        else:
+            print(message, file=sys.stderr)
+        return 1
+
     result = importing.import_root(
         source,
         SANDBOX_SHADER_DIR,
@@ -193,6 +202,34 @@ def cmd_import_shaders(args: argparse.Namespace) -> int:
     imported = [d for d in result.decisions if d.status == "imported"]
     rejected = [d for d in result.decisions if d.status == "rejected"]
 
+    verify_broken: list[str] = []
+    verify_inconclusive: list[str] = []
+    if verify_requested and imported and not args.dry_run:
+        from core import verify as verify_mod
+
+        vr = verify_mod.verify_shaders(
+            [d.name for d in imported],
+            shader_dir=SANDBOX_SHADER_DIR,
+            texture_dir=SANDBOX_TEXTURE_DIR,
+            config_path=Path(args.config),
+            each=args.verify_each,
+        )
+        verify_broken = vr.broken
+        verify_inconclusive = vr.inconclusive
+        removed = set(importing.remove_verified_broken(
+            verify_broken,
+            SANDBOX_SHADER_DIR,
+            {fx.stem: fx for fx in result.shaders},
+        ))
+        if removed:
+            for d in result.decisions:
+                if d.name in removed:
+                    d.status = "rejected"
+                    d.reason = "failed vkBasalt compile (skipped)"
+            imported = [d for d in result.decisions if d.status == "imported"]
+            rejected = [d for d in result.decisions if d.status == "rejected"]
+            result.copied = max(0, result.copied - len(removed))
+
     payload = {
         "source": str(source),
         "imported": [
@@ -211,6 +248,8 @@ def cmd_import_shaders(args: argparse.Namespace) -> int:
             "includes": result.inc_collisions,
             "textures": result.tex_collisions,
         },
+        "verify_broken": verify_broken,
+        "verify_inconclusive": verify_inconclusive,
         "copied": result.copied,
         "dry_run": args.dry_run,
     }
@@ -227,6 +266,10 @@ def cmd_import_shaders(args: argparse.Namespace) -> int:
         print(f"  rejected: {len(rejected)} shader(s)")
         for d in rejected:
             print(f"    {d.name}: {d.reason}")
+    if verify_broken:
+        print(f"  failed compile (skipped): {', '.join(verify_broken)}")
+    if verify_inconclusive:
+        print(f"  verification inconclusive: {', '.join(verify_inconclusive)}")
     collisions = result.inc_collisions + result.tex_collisions
     if collisions:
         print(f"  name collisions: {', '.join(sorted(set(collisions)))}")
@@ -493,6 +536,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument(
         "--force", action="store_true",
         help="Overwrite sandbox files even when they look up to date",
+    )
+    p_import.add_argument(
+        "--verify", action="store_true",
+        help="Launch Sober once with all imported shaders and drop any that "
+             "vkBasalt refuses to compile",
+    )
+    p_import.add_argument(
+        "--verify-each", action="store_true",
+        help="Like --verify, but launch one shader at a time for exact "
+             "attribution (slower)",
     )
 
     p_validate = sub.add_parser(

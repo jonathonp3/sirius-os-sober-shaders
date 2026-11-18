@@ -49,7 +49,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -57,23 +56,13 @@ if (_REPO_ROOT / "core").is_dir():
     sys.path.insert(0, str(_REPO_ROOT))
 
 from core import importing  # noqa: E402
+from core import verify as verify_mod  # noqa: E402
 
 
 SANDBOX_CFG = Path.home() / ".var/app/org.vinegarhq.Sober/config/vkBasalt"
 SANDBOX_SHADERS = SANDBOX_CFG / "Shaders"
 SANDBOX_TEXTURES = SANDBOX_CFG / "Textures"
 ACTIVE_CONFIG = SANDBOX_CFG / "vkBasalt.conf"
-
-# How long to let Sober run during --verify before killing it and reading
-# whatever vkBasalt logged. Compile errors are emitted right after the config
-# block, so a few seconds is enough.
-COMPILE_TIMEOUT = 20.0
-
-# Per-shader verification launches one Sober per shader so a header-located
-# error can be attributed exactly. Good shaders never exit, so this is the
-# wall-clock cost per shader; bad ones usually crash well before it.
-COMPILE_EACH_TIMEOUT = 8.0
-
 
 # --- source acquisition ---------------------------------------------------
 
@@ -96,142 +85,6 @@ def clone_repo(url: str, dest: Path) -> Path:
             "git clone failed: " + (result.stderr or result.stdout or "").strip()
         )
     return dest
-
-
-# --- optional compile verification ----------------------------------------
-
-def _verify_config(names: list[str]):
-    from core import config as config_mod
-
-    cfg = config_mod.VkBasaltConfig()
-    cfg.depth_capture = "on"
-    cfg.reshade_texture_path = str(SANDBOX_TEXTURES)
-    cfg.reshade_include_path = str(SANDBOX_SHADERS)
-    for name in names:
-        alias = "".join(c for c in name.lower() if c.isalnum()) or "shader"
-        cfg.effects.append(alias)
-        cfg.shader_paths[alias] = str(SANDBOX_SHADERS / f"{name}.fx")
-    return cfg
-
-
-def _kill_sober() -> None:
-    subprocess.run(["flatpak", "kill", "org.vinegarhq.Sober"],
-                   capture_output=True, check=False)
-    time.sleep(2.0)
-
-
-def _capture_verify(names: list[str], timeout: float) -> tuple[bool, list[str]]:
-    from core import config as config_mod
-    from core import launch as launch_mod
-
-    config_mod.write(_verify_config(names), ACTIVE_CONFIG)
-    args = launch_mod._build_argv(verify=True)
-    proc = subprocess.Popen(
-        args,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL, start_new_session=True,
-    )
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        # Kill the app before draining: the sandboxed child inherits our
-        # stdout pipe, so communicate() can block until it is gone.
-        _kill_sober()
-        try:
-            out, _ = proc.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            out = b""
-    text = out.decode("utf-8", errors="replace")
-    return launch_mod._parse_vkbasalt_log(text)
-
-
-def compile_verify(names: list[str], each: bool = False) -> list[str]:
-    """
-    Launch Sober in verify mode and return the shader names that failed.
-
-    With `each=False` all candidates go in one config; errors are attributed
-    by looking for the shader name in the error line. That misses errors that
-    vkBasalt reports at a header location (e.g. `Includes/bb_normal.fxh:132`).
-    With `each=True` one shader is launched per config, so any error belongs
-    to that shader — slower, but exact.
-
-    The active config is saved and restored; Sober is killed afterwards.
-    Best-effort: the raw vkBasalt errors are still printed for inspection.
-    """
-    backup = ACTIVE_CONFIG.with_name("vkBasalt.conf.import-verify-bak")
-    had_active = ACTIVE_CONFIG.exists()
-    if had_active:
-        shutil.copy2(ACTIVE_CONFIG, backup)
-
-    broken: list[str] = []
-    groups = [[name] for name in names] if each else [list(names)]
-    try:
-        for group in groups:
-            loaded, errors = _capture_verify(
-                group,
-                COMPILE_EACH_TIMEOUT if each else COMPILE_TIMEOUT,
-            )
-            if each:
-                # The config held exactly this shader, so any error is its.
-                # If Sober exited before vkBasalt loaded there is no verdict;
-                # report it rather than deleting a possibly-good shader.
-                if errors:
-                    broken.append(group[0])
-                elif not loaded:
-                    print(
-                        f"warning: verification inconclusive for {group[0]} "
-                        "(Sober exited before vkBasalt loaded)",
-                        file=sys.stderr,
-                    )
-                _kill_sober()
-                time.sleep(1.0)
-            else:
-                for err in errors:
-                    for name in names:
-                        if name.lower() in err.lower():
-                            broken.append(name)
-    finally:
-        if had_active:
-            shutil.copy2(backup, ACTIVE_CONFIG)
-            backup.unlink(missing_ok=True)
-        else:
-            ACTIVE_CONFIG.unlink(missing_ok=True)
-        _kill_sober()
-
-    seen: set[str] = set()
-    return [b for b in broken if not (b in seen or seen.add(b))]
-
-# --- verified-broken cleanup ----------------------------------------------
-
-def _remove_verified_broken(
-    names: list[str],
-    source_by_name: dict[str, Path],
-) -> list[str]:
-    """Delete .fx files that vkBasalt refused, if they are our rewritten copy.
-
-    Shared headers/textures are left alone: only the top-level shader is
-    removed, so a broken shader stops appearing in the GUI's shader list.
-    The content check avoids deleting a different, newer file the user may
-    have placed in the sandbox under the same name.
-    """
-    removed: list[str] = []
-    for name in names:
-        src = source_by_name.get(name)
-        dst = SANDBOX_SHADERS / f"{name}.fx"
-        if src is None or not dst.is_file():
-            continue
-        try:
-            expected = importing.rewrite_references(
-                src.read_text(encoding="utf-8", errors="replace")
-            )
-            actual = dst.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if actual == expected:
-            dst.unlink()
-            removed.append(name)
-    return removed
 
 
 # --- reporting ------------------------------------------------------------
@@ -337,11 +190,24 @@ def main(argv: list[str]) -> int:
             mode = "one shader at a time" if args.verify_each else "in one batch"
             print(f"Launching Sober to verify compilation ({mode})...",
                   file=sys.stderr)
-            verify_broken = compile_verify(
-                [d.name for d in imported], each=args.verify_each,
+            vr = verify_mod.verify_shaders(
+                [d.name for d in imported],
+                shader_dir=SANDBOX_SHADERS,
+                texture_dir=SANDBOX_TEXTURES,
+                config_path=ACTIVE_CONFIG,
+                each=args.verify_each,
             )
+            verify_broken = vr.broken
+            for name in vr.inconclusive:
+                print(
+                    f"warning: verification inconclusive for {name} "
+                    "(Sober exited before vkBasalt loaded)",
+                    file=sys.stderr,
+                )
             source_by_name = {fx.stem: fx for fx in result.shaders}
-            removed = set(_remove_verified_broken(verify_broken, source_by_name))
+            removed = set(importing.remove_verified_broken(
+                verify_broken, SANDBOX_SHADERS, source_by_name,
+            ))
             if removed:
                 for d in result.decisions:
                     if d.name in removed:

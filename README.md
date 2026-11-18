@@ -238,8 +238,10 @@ qUINT/                                reshade-shaders/
 ```
 
 In the app, **Import folder…** (next to **Import shader…**) runs this same
-validation and shows the imported/rejected breakdown. From a terminal,
-point the script at a directory or a git URL:
+validation and shows the imported/rejected breakdown. Its confirmation
+dialog has a **Verify after import** checkbox that also launches Sober once
+per shader and drops any shader vkBasalt refuses to compile. From a
+terminal, point the script at a directory or a git URL:
 
 ```bash
 # Preview: validate and report, touch nothing

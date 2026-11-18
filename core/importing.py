@@ -432,3 +432,33 @@ def import_root(
         tex_collisions=tex_collisions,
         copied=copied,
     )
+
+
+def remove_verified_broken(
+    names: list[str],
+    shader_dir: Path,
+    source_by_name: dict[str, Path],
+) -> list[str]:
+    """Delete our rewritten .fx copies for shaders vkBasalt refused.
+
+    Shared headers and textures are left alone. The content check avoids
+    deleting a different, newer file the user may have placed under the
+    same name.
+    """
+    removed: list[str] = []
+    for name in names:
+        src = source_by_name.get(name)
+        dst = shader_dir / f"{name}.fx"
+        if src is None or not dst.is_file():
+            continue
+        try:
+            expected = rewrite_references(
+                src.read_text(encoding="utf-8", errors="replace")
+            )
+            actual = dst.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if actual == expected:
+            dst.unlink()
+            removed.append(name)
+    return removed

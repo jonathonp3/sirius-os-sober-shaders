@@ -780,18 +780,47 @@ class MainWindow(Adw.ApplicationWindow):
                 return  # user cancelled
             if gfile is None:
                 return
-            self._start_folder_import(Path(gfile.get_path()))
+            self._confirm_folder_import(Path(gfile.get_path()))
 
         dialog.select_folder(self, None, done)
 
-    def _start_folder_import(self, folder: Path) -> None:
+    def _confirm_folder_import(self, folder: Path) -> None:
+        verify_check = Gtk.CheckButton(
+            label="Verify after import (launches Sober; slower)"
+        )
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Import shader folder",
+            body=str(folder),
+        )
+        dialog.set_extra_child(verify_check)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("import", "Import")
+        dialog.set_response_appearance(
+            "import", Adw.ResponseAppearance.SUGGESTED,
+        )
+        dialog.set_default_response("import")
+        dialog.set_close_response("cancel")
+
+        def on_response(dlg, response):
+            if response == "import":
+                self._start_folder_import(
+                    folder, verify=verify_check.get_active(),
+                )
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _start_folder_import(self, folder: Path, verify: bool = False) -> None:
         self._import_folder_btn.set_sensitive(False)
-        self._import_folder_btn.set_label("Importing…")
+        self._import_folder_btn.set_label(
+            "Importing & verifying…" if verify else "Importing…"
+        )
         self._fetch_btn.set_sensitive(False)
         self._import_btn.set_sensitive(False)
 
         def worker():
-            result = cli_bridge.import_shaders(str(folder))
+            result = cli_bridge.import_shaders(str(folder), verify=verify)
             GLib.idle_add(self._import_folder_done, result)
 
         threading.Thread(target=worker, daemon=True).start()

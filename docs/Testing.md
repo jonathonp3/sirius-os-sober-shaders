@@ -31,12 +31,12 @@ The tests are organized by module, one file per source file:
 | `tests/test_config.py` | `core/config.py` — `vkBasalt.conf` parsing, writing, and validation | 9 |
 | `tests/test_fetch.py` | `core/fetch.py` — Git clone/pull wrapper | 5 |
 | `tests/test_launch.py` | `core/launch.py` — launch modes (normal, detached, verify, verify-then-detach) and running-instance checks | 14 |
-| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner, including `import-shaders` | 27 |
+| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner, including `import-shaders` and its verify cleanup | 28 |
 | `tests/fixtures/` | Captured Flatpak info, `flatpak list` output, `.fx` files, and fake `.fx` shaders | — |
 
 
-The count adds up to 104 tests. The exact number appears in the pytest output
-(`104 passed in 0.10s` or similar).
+The count adds up to 105 tests. The exact number appears in the pytest output
+(`105 passed in 0.14s` or similar).
 
 `tests/test_importing.py` builds small source trees under pytest's
 `tmp_path` — a qUINT-style flat `Shaders/` and a Barbatos-style
@@ -233,10 +233,11 @@ the function uses (`stdout.readline`, `poll`, `kill`, `stdout.close`).
 - Real git clones. `core/fetch.py's` runner is mocked. The suite doesn't
   catch network errors, auth issues, or repo-URL changes.
 
-- Compile verification. `--verify` / `--verify-each` launch Sober and read
-  vkBasalt's log, so they are validated manually against a real install.
-  The unit suite covers the dependency decisions that happen before the
-  launch, not the compiler's verdict.
+- Compile verification. `core/verify.py` (used by `--verify` /
+  `--verify-each`) launches Sober and reads vkBasalt's log, so it is
+  validated manually against a real install. The unit suite covers the
+  dependency decisions before the launch and the CLI cleanup after a
+  mocked verdict, not the compiler itself.
 
 - Integration. There's no end-to-end test that runs apply against a
   real Sober install. That's the manual validation flow described in

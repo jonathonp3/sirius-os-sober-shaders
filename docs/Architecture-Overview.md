@@ -25,7 +25,7 @@ layer below it**.
 │ function calls (no subprocess)
 ┌──────────────────────▼──────────────────────────────────────┐
 │ Core (pure Python) — core/ │
-│ runtime, config, launch, fetch, importing, shader │
+│ runtime, config, launch, fetch, importing, verify, shader │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,6 +64,7 @@ sirius-os-sober-shaders/
 │ ├── launch.py launch Sober (normal, detached, verify, verify-then-detach)
 │ ├── fetch.py git clone/pull GShade and ReShade repos
 │ ├── importing.py import decisions, path rewrite, copy
+│ ├── verify.py launch Sober to compile-verify imports
 │ └── shader.py parse .fx files, check include/texture deps
 ├── cli/ argparse wrappers around core
 │ ├── main.py subcommand dispatch, one function per command
@@ -228,6 +229,24 @@ The import pipeline shared by `scripts/import-shaders.py` and the GUI.
 It has no subprocess calls; the only writes go to the `shader_dir` /
 `texture_dir` passed in.
 
+### `core/verify.py` — compile verification
+
+`verify_shaders(names, shader_dir=..., texture_dir=..., config_path=...,
+each=False)` writes a throwaway config, launches Sober in verify mode, reads
+vkBasalt's `err:` lines, kills Sober, and restores the active config.
+
+- Batch mode (`each=False`) puts every candidate in one config and
+  attributes errors by matching the shader name in the error line.
+- Per-shader mode (`each=True`) launches once per shader; any error belongs
+  to that shader, which also covers errors vkBasalt reports at a header
+  path. An 8 s window per shader is enough because compile errors appear
+  right after the config block.
+
+It returns `VerifyResult(broken, inconclusive)`. `remove_verified_broken()`
+in `core/importing.py` deletes the rewritten `.fx` for each broken shader
+(content-checked; shared headers/textures are left alone), so the GUI
+shader list stays clean.
+
 ### `core/shader.py` — .fx parsing
 
 Not an HLSL parser — a set of regexes that match the specific syntactic
@@ -264,7 +283,7 @@ JSON. `cli/__main__.py` is the `python -m cli` entry point.
 | `rollback` | Copy `last-known-good.conf` over `vkBasalt.conf` | 0, 10 (no backup) |
 | `list-shaders [--shader-dir DIR]` | Parse every `.fx` in `DIR` (default `~/GShade-Shaders/Shaders`), print uniforms, flag missing deps | 0 |
 | `fetch-shaders [--dest DIR] [--update]` | Clone or pull GShade and ReShade repos | 0, 11 (FetchError), 12 (fetch failed) |
-| `import-shaders DIR [--dry-run] [--force]` | Validate a folder's shaders against the sandbox and copy only the ones whose dependencies resolve | 0, 1 (bad source / no `.fx`) |
+| `import-shaders DIR [--dry-run] [--force] [--verify \| --verify-each]` | Validate a folder's shaders against the sandbox and copy only the ones whose dependencies resolve; the verify flags also launch Sober and drop shaders it refuses to compile | 0, 1 (bad source / no `.fx` / Sober running) |
 | `validate-config FILE [--shader-dir DIR]` | Structural check + parameter-name check against the referenced shaders | 0 valid, 5 parse error, 13 validation errors |
 
 Global flags: `--config PATH` (override the active config path),
@@ -281,7 +300,7 @@ GUI invokes outputs a JSON object with a stable schema:
 - `fetch-shaders` → `{action, dest, success, message}`
 - `import-shaders` → `{source, imported: [{name, includes, textures}],
   rejected: [{name, reason, missing}], collisions: {includes, textures},
-  copied, dry_run}`
+  verify_broken, verify_inconclusive, copied, dry_run}`
 
 ## The GUI
 
@@ -343,8 +362,9 @@ The main window, ~800 lines. The pieces:
 - **`_on_apply`** — `_collect_config` → `validate` → write to temp file →
   disable buttons → `cli_bridge.apply_config(detach=True)` in a worker
   thread → `_apply_done` on the main thread.
-- **`_on_import_folder`** — folder picker → `cli_bridge.import_shaders()`
-  in a worker thread → `_import_folder_done` persists the imported names,
+- **`_on_import_folder`** — folder picker → confirmation dialog with a
+  "Verify after import" checkbox → `cli_bridge.import_shaders()` in a
+  worker thread → `_import_folder_done` persists the imported names,
   refreshes the list, and shows an "Import finished" dialog with the
   imported/rejected breakdown and rejection reasons.
 - **`_fetch_done`** — after a successful `fetch_shaders()`, copies the

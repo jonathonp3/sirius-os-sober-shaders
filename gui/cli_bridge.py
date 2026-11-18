@@ -175,12 +175,23 @@ def fetch_shaders(dest: str | None = None, update: bool = False) -> FetchResult:
     )
 
 
-def import_shaders(source: str, dry_run: bool = False) -> ImportResult:
-    """Import a folder of shaders, validating every dependency first."""
+def import_shaders(
+    source: str,
+    dry_run: bool = False,
+    verify: bool = False,
+) -> ImportResult:
+    """Import a folder of shaders, validating every dependency first.
+
+    With `verify=True`, launch Sober once per shader after the copy and drop
+    any that vkBasalt refuses to compile. Slower, but catches shaders whose
+    files all resolve and still fail on an unsupported ReShade intrinsic.
+    """
     args = ["import-shaders", source]
     if dry_run:
         args.append("--dry-run")
-    code, out, err = _run_cli(args, timeout=600)
+    if verify:
+        args.append("--verify-each")
+    code, out, err = _run_cli(args, timeout=3600 if verify else 600)
     if not out.strip():
         return ImportResult(
             ok=False, source=source,

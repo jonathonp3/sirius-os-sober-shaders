@@ -429,3 +429,31 @@ def test_import_shaders_no_fx(capsys, tmp_path, monkeypatch):
     data = json.loads(capsys.readouterr().out)
     assert "no .fx files" in data["error"]
 
+
+def test_import_shaders_verify_removes_broken(capsys, tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(cli_main, "SANDBOX_SHADER_DIR", sandbox / "Shaders")
+    monkeypatch.setattr(cli_main, "SANDBOX_TEXTURE_DIR", sandbox / "Textures")
+    monkeypatch.setattr(cli_main.launch_mod, "_sober_running", lambda: False)
+    src = _make_import_source(tmp_path)
+
+    from core import verify as verify_mod
+
+    def fake_verify(names, **kwargs):
+        return verify_mod.VerifyResult(broken=["Good"])
+
+    monkeypatch.setattr(verify_mod, "verify_shaders", fake_verify)
+
+    code = cli_main.main(
+        ["--json", "import-shaders", str(src), "--verify-each"]
+    )
+
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["imported"] == []
+    assert {d["name"] for d in data["rejected"]} == {"Good", "Broken"}
+    good = next(d for d in data["rejected"] if d["name"] == "Good")
+    assert "failed vkBasalt compile" in good["reason"]
+    assert data["verify_broken"] == ["Good"]
+    assert not (sandbox / "Shaders" / "Good.fx").exists()
+

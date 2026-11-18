@@ -107,6 +107,14 @@ def _default_running_checker() -> bool:
     return _sober_running()
 
 
+def kill_sober() -> None:
+    """Ask Flatpak to stop Sober. Best-effort; safe when it is not running."""
+    subprocess.run(
+        [*_flatpak_cmd(), "kill", SOBER_APP_ID],
+        capture_output=True, check=False,
+    )
+
+
 def _build_argv(verify: bool) -> list[str]:
     """Build the flatpak argv for launching Sober with vkBasalt."""
     env_flags = ["--env=ENABLE_VKBASALT=1"]
