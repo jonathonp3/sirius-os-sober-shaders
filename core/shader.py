@@ -211,3 +211,104 @@ def check_dependencies(
             if not (texture_dir / tex).exists():
                 missing.append(f"missing texture: {tex}")
     return missing
+
+
+def normalize_reference(raw: str) -> str:
+    """Normalize an #include or texture source path to a POSIX relative path.
+
+    Handles Windows separators and ReShade's common forms:
+        .\\Includes\\foo.fxh -> Includes/foo.fxh
+        ./Includes/foo.fxh   -> Includes/foo.fxh
+        Includes\\foo.fxh    -> Includes/foo.fxh
+        foo.fxh              -> foo.fxh
+    """
+    p = (raw or "").strip().strip('"').strip("'")
+    p = p.replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    if p == ".":
+        p = ""
+    p = p.lstrip("/")
+    return p
+
+
+def read_includes(path: Path) -> list[str]:
+    """Return the normalized #include references from a shader or header file.
+
+    Unlike parse_fx, this extracts only includes (no uniform parsing), so it
+    is cheap to call on .fxh headers during transitive resolution.
+    """
+    text = path.read_text(errors="replace")
+    text = re.sub(r"//[^\n]*", "", text)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return [normalize_reference(m) for m in _INCLUDE_RE.findall(text)]
+
+
+def read_textures(path: Path) -> list[str]:
+    """Return the normalized texture sources declared in a shader or header.
+
+    A header can declare `texture X < source = "file.png" >`, so texture
+    dependencies have to be collected transitively alongside includes.
+    """
+    text = path.read_text(errors="replace")
+    text = re.sub(r"//[^\n]*", "", text)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return [normalize_reference(m) for m in _TEXTURE_SOURCE_RE.findall(text)]
+
+
+def resolve_dependencies(
+    shader: ShaderInfo,
+    shader_dir: Path,
+    texture_dir: Path | None = None,
+) -> tuple[list[str], set[str], set[str]]:
+    """Compiler-accurate dependency resolution for a shader.
+
+    Resolves includes the way vkBasalt does: an #include is looked up as
+    `shader_dir / <path>` (flat, no recursive search), and a texture as
+    `texture_dir / <path>`. Includes are followed transitively.
+
+    This is deliberately stricter than the old basename/subdir fallback,
+    which reported a shader as resolved when its include existed anywhere
+    under shader_dir — even at a subpath vkBasalt would not search — so the
+    shader then failed to compile at runtime.
+
+    Returns (missing, resolved_includes, resolved_textures).
+    """
+    missing: list[str] = []
+    resolved_includes: set[str] = set()
+    resolved_textures: set[str] = set()
+
+    # Textures can be declared in the shader or in any included header, so
+    # collect them while walking the include graph.
+    texture_refs: list[str] = [normalize_reference(t) for t in shader.textures]
+
+    seen: set[str] = set()
+    queue: list[str] = [normalize_reference(inc) for inc in shader.includes]
+    while queue:
+        norm = queue.pop(0)
+        if not norm or norm.lower() in seen:
+            continue
+        seen.add(norm.lower())
+        candidate = shader_dir / norm
+        if candidate.is_file():
+            resolved_includes.add(norm)
+            for inc in read_includes(candidate):
+                if inc and inc.lower() not in seen:
+                    queue.append(inc)
+            texture_refs.extend(read_textures(candidate))
+        else:
+            missing.append(f"missing include: {norm}")
+
+    if texture_dir is not None:
+        seen_textures: set[str] = set()
+        for norm in texture_refs:
+            if not norm or norm.lower() in seen_textures:
+                continue
+            seen_textures.add(norm.lower())
+            if (texture_dir / norm).is_file():
+                resolved_textures.add(norm)
+            else:
+                missing.append(f"missing texture: {norm}")
+
+    return missing, resolved_includes, resolved_textures
+    

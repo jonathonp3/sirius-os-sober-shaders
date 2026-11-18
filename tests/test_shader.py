@@ -80,3 +80,91 @@ def test_parse_does_not_crash_on_garbage(tmp_path):
     info = shader.parse_fx(bad)
     # No exception, possibly no uniforms, possibly a warning — but it returns.
     assert info.name == "Bad"
+    
+# --- normalize_reference / read_includes / resolve_dependencies -----------
+
+def test_normalize_reference_windows_backslashes():
+    assert shader.normalize_reference('.\\Includes\\bb_common.fxh') == 'Includes/bb_common.fxh'
+    assert shader.normalize_reference('./Includes/bb_common.fxh') == 'Includes/bb_common.fxh'
+    assert shader.normalize_reference('Includes\\bb_common.fxh') == 'Includes/bb_common.fxh'
+    assert shader.normalize_reference('bb_common.fxh') == 'bb_common.fxh'
+
+
+def test_normalize_reference_quotes_and_empties():
+    assert shader.normalize_reference('"ReShade.fxh"') == 'ReShade.fxh'
+    assert shader.normalize_reference("'ReShade.fxh'") == 'ReShade.fxh'
+    assert shader.normalize_reference('.') == ''
+    assert shader.normalize_reference('') == ''
+
+
+def test_read_includes_skips_comments_and_normalizes(tmp_path):
+    f = tmp_path / "a.fxh"
+    f.write_text(
+        '#include "b.fxh"\n'
+        '#include <c.fxh>\n'
+        '// #include "commented.fxh"\n'
+        '#include ".\\Includes\\d.fxh"\n'
+    )
+    assert shader.read_includes(f) == ['b.fxh', 'c.fxh', 'Includes/d.fxh']
+
+
+def test_resolve_dependencies_transitive(tmp_path):
+    (tmp_path / "a.fxh").write_text('#include "b.fxh"\n')
+    (tmp_path / "b.fxh").write_text('// nothing\n')
+    fx = tmp_path / "S.fx"
+    fx.write_text('#include "a.fxh"\n')
+    info = shader.parse_fx(fx)
+
+    missing, includes, textures = shader.resolve_dependencies(
+        info, shader_dir=tmp_path, texture_dir=tmp_path,
+    )
+    assert missing == []
+    assert includes == {'a.fxh', 'b.fxh'}
+    assert textures == set()
+
+
+def test_resolve_dependencies_missing_include_and_texture(tmp_path):
+    fx = tmp_path / "S.fx"
+    fx.write_text(
+        '#include "nope.fxh"\n'
+        'texture2D t < source = "gone.png"; > { Width = 1; Height = 1; };\n'
+    )
+    info = shader.parse_fx(fx)
+    missing, includes, textures = shader.resolve_dependencies(
+        info, shader_dir=tmp_path, texture_dir=tmp_path,
+    )
+    assert any("nope.fxh" in m for m in missing)
+    assert any("gone.png" in m for m in missing)
+    assert includes == set()
+    assert textures == set()
+
+
+def test_resolve_dependencies_backslash_include_resolves(tmp_path):
+    (tmp_path / "Includes").mkdir()
+    (tmp_path / "Includes" / "bb_common.fxh").write_text("// header\n")
+    fx = tmp_path / "S.fx"
+    fx.write_text('#include ".\\Includes\\bb_common.fxh"\n')
+    info = shader.parse_fx(fx)
+
+    missing, includes, _ = shader.resolve_dependencies(
+        info, shader_dir=tmp_path, texture_dir=tmp_path,
+    )
+    assert missing == []
+    assert includes == {'Includes/bb_common.fxh'}
+
+
+def test_resolve_dependencies_collects_textures_from_headers(tmp_path):
+    (tmp_path / "h.fxh").write_text(
+        'texture2D t < source = "hdr.png"; > { Width = 1; Height = 1; };\n'
+    )
+    (tmp_path / "hdr.png").write_bytes(b"x")
+    fx = tmp_path / "S.fx"
+    fx.write_text('#include "h.fxh"\n')
+    info = shader.parse_fx(fx)
+
+    missing, includes, textures = shader.resolve_dependencies(
+        info, shader_dir=tmp_path, texture_dir=tmp_path,
+    )
+    assert missing == []
+    assert includes == {"h.fxh"}
+    assert textures == {"hdr.png"}

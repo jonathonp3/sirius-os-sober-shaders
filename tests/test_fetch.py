@@ -16,7 +16,16 @@ def _fake_runner(outputs: dict[tuple[str, ...], tuple[int, str, str]]):
     return runner
 
 
-def test_fetch_clone_success(tmp_path):
+@pytest.fixture
+def reshade_dest(tmp_path, monkeypatch):
+    """Redirect the ReShade upstream into tmp_path so tests stay offline."""
+    dest = tmp_path / "reshade-shaders"
+    dest.mkdir()
+    monkeypatch.setattr(fetch, "RESHADE_DEST", dest)
+    return dest
+
+
+def test_fetch_clone_success(tmp_path, reshade_dest):
     dest = tmp_path / "GShade-Shaders"
     runner = _fake_runner({
         ("git", "clone", "--depth=1", fetch.GSHADE_REPO_URL, str(dest)):
@@ -27,7 +36,7 @@ def test_fetch_clone_success(tmp_path):
     assert result.action == "cloned"
 
 
-def test_fetch_already_present_without_update(tmp_path):
+def test_fetch_already_present_without_update(tmp_path, reshade_dest):
     dest = tmp_path / "GShade-Shaders"
     dest.mkdir()
     result = fetch.fetch(
@@ -41,11 +50,13 @@ def test_fetch_already_present_without_update(tmp_path):
     assert result.action == "already-present"
 
 
-def test_fetch_update_success(tmp_path):
+def test_fetch_update_success(tmp_path, reshade_dest):
     dest = tmp_path / "GShade-Shaders"
     dest.mkdir()
     runner = _fake_runner({
         ("git", "-C", str(dest), "pull", "--ff-only"):
+            (0, "Already up to date.\n", ""),
+        ("git", "-C", str(reshade_dest), "pull", "--ff-only"):
             (0, "Already up to date.\n", ""),
     })
     result = fetch.fetch(dest, update=True, runner=runner)
@@ -53,7 +64,7 @@ def test_fetch_update_success(tmp_path):
     assert result.action == "updated"
 
 
-def test_fetch_clone_failure(tmp_path):
+def test_fetch_clone_failure(tmp_path, reshade_dest):
     dest = tmp_path / "GShade-Shaders"
     runner = _fake_runner({
         ("git", "clone", "--depth=1", fetch.GSHADE_REPO_URL, str(dest)):
