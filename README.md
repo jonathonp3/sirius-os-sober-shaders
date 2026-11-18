@@ -237,7 +237,9 @@ qUINT/                                reshade-shaders/
 └── Textures/ (optional)              └── Textures/Barbatos/SS_BN2.png
 ```
 
-Point it at a directory or a git URL:
+In the app, **Import folder…** (next to **Import shader…**) runs this same
+validation and shows the imported/rejected breakdown. From a terminal,
+point the script at a directory or a git URL:
 
 ```bash
 # Preview: validate and report, touch nothing

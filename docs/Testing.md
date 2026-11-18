@@ -31,19 +31,21 @@ The tests are organized by module, one file per source file:
 | `tests/test_config.py` | `core/config.py` — `vkBasalt.conf` parsing, writing, and validation | 9 |
 | `tests/test_fetch.py` | `core/fetch.py` — Git clone/pull wrapper | 5 |
 | `tests/test_launch.py` | `core/launch.py` — launch modes (normal, detached, verify, verify-then-detach) and running-instance checks | 14 |
-| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner | 23 |
+| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner, including `import-shaders` | 27 |
 | `tests/fixtures/` | Captured Flatpak info, `flatpak list` output, `.fx` files, and fake `.fx` shaders | — |
 
 
-The count adds up to 100 tests. The exact number appears in the pytest output
-(`100 passed in 0.08s` or similar).
+The count adds up to 104 tests. The exact number appears in the pytest output
+(`104 passed in 0.10s` or similar).
 
 `tests/test_importing.py` builds small source trees under pytest's
 `tmp_path` — a qUINT-style flat `Shaders/` and a Barbatos-style
 `Shaders/Includes/` + `Textures/<author>/` tree — and asserts which shaders
 are imported, which are rejected, and why. It also covers the Windows-path
 rewrite and that copies land at both the flat and preserved paths. No Sober
-launch is involved.
+launch is involved. `tests/test_cli.py` also exercises the `import-shaders`
+command end to end (JSON report, dry-run, bad source), so the GUI's
+subprocess bridge has a tested target.
 
 
 ## The three design constraints

@@ -25,7 +25,7 @@ from gi.repository import Adw, Gtk, GLib
 from core import config as config_mod
 from core import shader as shader_mod
 from gui import cli_bridge
-from gui.dialogs import show_error_dialog
+from gui.dialogs import show_error_dialog, show_import_report
 
 
 GHSHADE_SHADER_DIR = Path.home() / "GShade-Shaders" / "Shaders"
@@ -167,6 +167,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._import_btn = Gtk.Button(label="Import shader…")
         self._import_btn.connect("clicked", self._on_import_shader)
         bottom.append(self._import_btn)
+
+        self._import_folder_btn = Gtk.Button(label="Import folder…")
+        self._import_folder_btn.connect("clicked", self._on_import_folder)
+        bottom.append(self._import_folder_btn)
 
         toolbar.add_bottom_bar(bottom)
 
@@ -619,6 +623,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._rollback_btn.set_sensitive(False)
         self._fetch_btn.set_sensitive(False)
         self._import_btn.set_sensitive(False)
+        self._import_folder_btn.set_sensitive(False)
 
         def worker():
             result = cli_bridge.apply_config(tmp_path, detach=True)
@@ -634,6 +639,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._rollback_btn.set_sensitive(True)
         self._fetch_btn.set_sensitive(True)
         self._import_btn.set_sensitive(True)
+        self._import_folder_btn.set_sensitive(True)
 
         if result.ok:
             self._banner.set_title("Shaders applied successfully.")
@@ -658,16 +664,6 @@ class MainWindow(Adw.ApplicationWindow):
             self._banner.set_revealed(True)
         else:
             show_error_dialog(self, "No backup found or rollback failed.")
-
-    def _on_fetch_shaders(self, _btn) -> None:
-        self._fetch_btn.set_sensitive(False)
-        self._fetch_btn.set_label("Fetching…")
-
-        def worker():
-            result = cli_bridge.fetch_shaders()
-            GLib.idle_add(self._fetch_done, result)
-
-        threading.Thread(target=worker, daemon=True).start()
 
     def _on_fetch_shaders(self, _btn) -> None:
         self._fetch_btn.set_sensitive(False)
@@ -772,6 +768,50 @@ class MainWindow(Adw.ApplicationWindow):
             self._import_shader_file(Path(gfile.get_path()))
 
         dialog.open(self, None, done)
+
+    def _on_import_folder(self, _btn) -> None:
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Import shader folder")
+
+        def done(dlg, result):
+            try:
+                gfile = dlg.select_folder_finish(result)
+            except GLib.Error:
+                return  # user cancelled
+            if gfile is None:
+                return
+            self._start_folder_import(Path(gfile.get_path()))
+
+        dialog.select_folder(self, None, done)
+
+    def _start_folder_import(self, folder: Path) -> None:
+        self._import_folder_btn.set_sensitive(False)
+        self._import_folder_btn.set_label("Importing…")
+        self._fetch_btn.set_sensitive(False)
+        self._import_btn.set_sensitive(False)
+
+        def worker():
+            result = cli_bridge.import_shaders(str(folder))
+            GLib.idle_add(self._import_folder_done, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _import_folder_done(self, result: cli_bridge.ImportResult) -> bool:
+        self._import_folder_btn.set_sensitive(True)
+        self._import_folder_btn.set_label("Import folder…")
+        self._fetch_btn.set_sensitive(True)
+        self._import_btn.set_sensitive(True)
+
+        if not result.ok:
+            show_error_dialog(self, f"Import failed: {result.error}")
+            return False
+
+        for d in result.imported:
+            self._imported_names.add(d.name)
+        self._save_imported_names()
+        self._refresh()
+        show_import_report(self, result)
+        return False
 
     def _import_shader_file(self, src: Path) -> None:
         """

@@ -11,6 +11,7 @@ logic is `apply`, which orchestrates the test-and-rollback flow.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,9 @@ from cli import format as fmt
 DEFAULT_ACTIVE_CONFIG = Path.home() / (
     ".var/app/org.vinegarhq.Sober/config/vkBasalt/vkBasalt.conf"
 )
+SANDBOX_CONFIG_DIR = DEFAULT_ACTIVE_CONFIG.parent
+SANDBOX_SHADER_DIR = SANDBOX_CONFIG_DIR / "Shaders"
+SANDBOX_TEXTURE_DIR = SANDBOX_CONFIG_DIR / "Textures"
 
 
 def _backup_path(active: Path) -> Path:
@@ -157,6 +161,78 @@ def cmd_fetch_shaders(args: argparse.Namespace) -> int:
     return 0
 
 # --- commands ------------------------------------------------------------
+
+def cmd_import_shaders(args: argparse.Namespace) -> int:
+    from core import importing
+
+    source = Path(args.source).expanduser()
+    if not source.is_dir():
+        message = f"not a directory: {source}"
+        if args.json:
+            print(json.dumps({"source": str(source), "error": message}))
+        else:
+            print(message, file=sys.stderr)
+        return 1
+
+    result = importing.import_root(
+        source,
+        SANDBOX_SHADER_DIR,
+        SANDBOX_TEXTURE_DIR,
+        force=args.force,
+        dry=args.dry_run,
+    )
+
+    if not result.shaders:
+        message = f"no .fx files found under {source}"
+        if args.json:
+            print(json.dumps({"source": str(source), "error": message}))
+        else:
+            print(f"No .fx files found under {source}", file=sys.stderr)
+        return 1
+
+    imported = [d for d in result.decisions if d.status == "imported"]
+    rejected = [d for d in result.decisions if d.status == "rejected"]
+
+    payload = {
+        "source": str(source),
+        "imported": [
+            {
+                "name": d.name,
+                "includes": d.resolved_includes,
+                "textures": d.resolved_textures,
+            }
+            for d in imported
+        ],
+        "rejected": [
+            {"name": d.name, "reason": d.reason, "missing": d.missing}
+            for d in rejected
+        ],
+        "collisions": {
+            "includes": result.inc_collisions,
+            "textures": result.tex_collisions,
+        },
+        "copied": result.copied,
+        "dry_run": args.dry_run,
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(f"Import report: {source}")
+    print(f"  imported: {len(imported)} shader(s)")
+    for d in imported:
+        print(f"    {d.name}")
+    if rejected:
+        print(f"  rejected: {len(rejected)} shader(s)")
+        for d in rejected:
+            print(f"    {d.name}: {d.reason}")
+    collisions = result.inc_collisions + result.tex_collisions
+    if collisions:
+        print(f"  name collisions: {', '.join(sorted(set(collisions)))}")
+    print(f"  {'would copy' if args.dry_run else 'copied'} {result.copied} file(s)")
+    return 0
+
 
 def cmd_check(args: argparse.Namespace) -> int:
     result = runtime_mod.check_compatibility()
@@ -403,6 +479,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Update an existing clone instead of reporting already-present",
     )
 
+    p_import = sub.add_parser(
+        "import-shaders",
+        help="Import a folder of shaders, validating dependencies first",
+    )
+    p_import.add_argument(
+        "source", help="Directory containing .fx/.fxh files and Textures/"
+    )
+    p_import.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate and report without touching the sandbox",
+    )
+    p_import.add_argument(
+        "--force", action="store_true",
+        help="Overwrite sandbox files even when they look up to date",
+    )
+
     p_validate = sub.add_parser(
         "validate-config",
         help="Check a vkBasalt.conf for structural and parameter-name errors",
@@ -423,6 +515,7 @@ COMMANDS = {
     "rollback": cmd_rollback,
     "list-shaders": cmd_list_shaders,
     "fetch-shaders": cmd_fetch_shaders,
+    "import-shaders": cmd_import_shaders,
     "validate-config": cmd_validate_config,
 }
 

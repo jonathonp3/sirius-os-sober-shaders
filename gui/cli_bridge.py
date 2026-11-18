@@ -50,6 +50,32 @@ class FetchResult:
     message: str = ""
 
 
+@dataclass
+class ImportedShader:
+    name: str
+    includes: list[str] = field(default_factory=list)
+    textures: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RejectedShader:
+    name: str
+    reason: str = ""
+    missing: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ImportResult:
+    ok: bool
+    source: str = ""
+    imported: list[ImportedShader] = field(default_factory=list)
+    rejected: list[RejectedShader] = field(default_factory=list)
+    collisions: list[str] = field(default_factory=list)
+    copied: int = 0
+    dry_run: bool = False
+    error: str = ""
+
+
 def _run_cli(args: list[str], timeout: int = 600) -> tuple[int, str, str]:
     """Run the CLI as a subprocess. `args` is everything after the global flags.
 
@@ -147,3 +173,53 @@ def fetch_shaders(dest: str | None = None, update: bool = False) -> FetchResult:
         dest=data["dest"],
         message=data.get("message", ""),
     )
+
+
+def import_shaders(source: str, dry_run: bool = False) -> ImportResult:
+    """Import a folder of shaders, validating every dependency first."""
+    args = ["import-shaders", source]
+    if dry_run:
+        args.append("--dry-run")
+    code, out, err = _run_cli(args, timeout=600)
+    if not out.strip():
+        return ImportResult(
+            ok=False, source=source,
+            error=err.strip() or "import-shaders returned no output",
+        )
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return ImportResult(
+            ok=False, source=source,
+            error=out.strip()[:300] or "import-shaders returned invalid JSON",
+        )
+    if data.get("error"):
+        return ImportResult(ok=False, source=source, error=data["error"])
+
+    collisions = data.get("collisions", {})
+    return ImportResult(
+        ok=True,
+        source=data.get("source", source),
+        imported=[
+            ImportedShader(
+                name=d["name"],
+                includes=d.get("includes", []),
+                textures=d.get("textures", []),
+            )
+            for d in data.get("imported", [])
+        ],
+        rejected=[
+            RejectedShader(
+                name=d["name"],
+                reason=d.get("reason", ""),
+                missing=d.get("missing", []),
+            )
+            for d in data.get("rejected", [])
+        ],
+        collisions=(
+            collisions.get("includes", []) + collisions.get("textures", [])
+        ),
+        copied=data.get("copied", 0),
+        dry_run=data.get("dry_run", dry_run),
+    )
+

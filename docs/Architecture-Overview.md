@@ -264,6 +264,7 @@ JSON. `cli/__main__.py` is the `python -m cli` entry point.
 | `rollback` | Copy `last-known-good.conf` over `vkBasalt.conf` | 0, 10 (no backup) |
 | `list-shaders [--shader-dir DIR]` | Parse every `.fx` in `DIR` (default `~/GShade-Shaders/Shaders`), print uniforms, flag missing deps | 0 |
 | `fetch-shaders [--dest DIR] [--update]` | Clone or pull GShade and ReShade repos | 0, 11 (FetchError), 12 (fetch failed) |
+| `import-shaders DIR [--dry-run] [--force]` | Validate a folder's shaders against the sandbox and copy only the ones whose dependencies resolve | 0, 1 (bad source / no `.fx`) |
 | `validate-config FILE [--shader-dir DIR]` | Structural check + parameter-name check against the referenced shaders | 0 valid, 5 parse error, 13 validation errors |
 
 Global flags: `--config PATH` (override the active config path),
@@ -278,6 +279,9 @@ GUI invokes outputs a JSON object with a stable schema:
 - `launch` → `{mode, success, exit_code, pid, vkbasalt_loaded, vkbasalt_errors}`
 - `rollback` → `{restored, effects}`
 - `fetch-shaders` → `{action, dest, success, message}`
+- `import-shaders` → `{source, imported: [{name, includes, textures}],
+  rejected: [{name, reason, missing}], collisions: {includes, textures},
+  copied, dry_run}`
 
 ## The GUI
 
@@ -304,7 +308,7 @@ The main window, ~800 lines. The pieces:
   filter), `_cas_enabled`, `_imported_names` (persisted across restarts).
 - **`_build_ui`** — the GTK layout: toolbar, banner, CAS row, shader list
   with Show-all switch, parameter area, bottom action bar (Rollback,
-  Apply, Launch, Fetch, Import).
+  Apply, Launch, Fetch, Import shader, Import folder).
 - **`_refresh`** — runs `cli_bridge.check()` for the banner, then
   `_discover_all_shaders()` and `_populate_list()`, then
   `_load_active_config()`.
@@ -339,6 +343,10 @@ The main window, ~800 lines. The pieces:
 - **`_on_apply`** — `_collect_config` → `validate` → write to temp file →
   disable buttons → `cli_bridge.apply_config(detach=True)` in a worker
   thread → `_apply_done` on the main thread.
+- **`_on_import_folder`** — folder picker → `cli_bridge.import_shaders()`
+  in a worker thread → `_import_folder_done` persists the imported names,
+  refreshes the list, and shows an "Import finished" dialog with the
+  imported/rejected breakdown and rejection reasons.
 - **`_fetch_done`** — after a successful `fetch_shaders()`, copies the
   GShade `.fx`/`.fxh` and Textures into the sandbox via `flatpak-spawn
   --host cp`, then the ReShade framework headers via two separate `cp`

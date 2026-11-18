@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -354,4 +355,77 @@ def test_validate_config_rejects_host_path(capsys, tmp_path):
     )
     assert code == 13
     err = capsys.readouterr().err
-    assert "not under /var/home/" in err    
+    assert "not under /var/home/" in err
+
+
+# --- import-shaders ------------------------------------------------------
+
+def _make_import_source(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    (src / "Shaders" / "Includes").mkdir(parents=True)
+    (src / "Shaders" / "Good.fx").write_text(
+        '#include ".\\Includes\\common.fxh"\n'
+        'texture2D t < source = "tex.png"; > { Width = 1; Height = 1; };\n'
+    )
+    (src / "Shaders" / "Includes" / "common.fxh").write_text("// header\n")
+    (src / "Shaders" / "Broken.fx").write_text('#include "missing.fxh"\n')
+    (src / "Textures").mkdir()
+    (src / "Textures" / "tex.png").write_bytes(b"x")
+    return src
+
+
+def test_import_shaders_json(capsys, tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(cli_main, "SANDBOX_SHADER_DIR", sandbox / "Shaders")
+    monkeypatch.setattr(cli_main, "SANDBOX_TEXTURE_DIR", sandbox / "Textures")
+    src = _make_import_source(tmp_path)
+
+    code = cli_main.main(["--json", "import-shaders", str(src)])
+
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [d["name"] for d in data["imported"]] == ["Good"]
+    assert data["rejected"][0]["name"] == "Broken"
+    assert "missing include: missing.fxh" in data["rejected"][0]["reason"]
+    # Shader + header (flat and Includes/) + texture.
+    assert data["copied"] == 4
+
+    copied = (sandbox / "Shaders" / "Good.fx").read_text()
+    assert '#include "Includes/common.fxh"' in copied
+    assert (sandbox / "Shaders" / "common.fxh").is_file()
+    assert (sandbox / "Shaders" / "Includes" / "common.fxh").is_file()
+    assert (sandbox / "Textures" / "tex.png").is_file()
+
+
+def test_import_shaders_dry_run(capsys, tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(cli_main, "SANDBOX_SHADER_DIR", sandbox / "Shaders")
+    monkeypatch.setattr(cli_main, "SANDBOX_TEXTURE_DIR", sandbox / "Textures")
+    src = _make_import_source(tmp_path)
+
+    code = cli_main.main(["--json", "import-shaders", str(src), "--dry-run"])
+
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["dry_run"] is True
+    assert data["copied"] > 0
+    assert not sandbox.exists()
+
+
+def test_import_shaders_bad_source(capsys, tmp_path):
+    code = cli_main.main(["import-shaders", str(tmp_path / "nope")])
+    assert code == 1
+    assert "not a directory" in capsys.readouterr().err
+
+
+def test_import_shaders_no_fx(capsys, tmp_path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(cli_main, "SANDBOX_SHADER_DIR", sandbox / "Shaders")
+    monkeypatch.setattr(cli_main, "SANDBOX_TEXTURE_DIR", sandbox / "Textures")
+
+    code = cli_main.main(["--json", "import-shaders", str(tmp_path)])
+
+    assert code == 1
+    data = json.loads(capsys.readouterr().out)
+    assert "no .fx files" in data["error"]
+
