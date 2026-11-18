@@ -93,6 +93,30 @@ flatpak run org.flatpak.Builder --user --force-clean --install \
     build-dir org.siriusos.SoberShaderManager.json
 ```
 
+### Verifying the installed build
+
+The app version stays `0.2.0`, so compare the commit instead:
+
+```bash
+git -C ~/sirius-os-sober-shaders rev-parse HEAD
+flatpak info --user org.siriusos.SoberShaderManager | grep Commit
+```
+
+Launch the user build explicitly if the desktop icon opens the system one:
+
+```bash
+flatpak run --user org.siriusos.SoberShaderManager
+```
+
+The window should show **Import folder…** next to **Import shader…**.
+Selecting a folder opens a confirmation dialog with **Verify after import
+(launches Sober; slower)**. The bundled CLI should list the verify flags:
+
+```bash
+flatpak run --user --command=sober-shader org.siriusos.SoberShaderManager \
+    import-shaders --help
+```
+
 ---
 
 ## The GShade upstream has shrunk
