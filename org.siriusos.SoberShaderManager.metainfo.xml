@@ -23,6 +23,13 @@
   <url type="vcs-browser">https://github.com/jonathonp3/sirius-os-sober-shaders</url>
 
   <releases>
+    <release version="0.3.0" date="2026-11-18">
+      <description>
+        <p>Validated folder import: dependencies are checked before copying,
+        Windows include paths are rewritten for vkBasalt, and verify gates
+        can drop shaders the compiler refuses.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-13"/>
   </releases>
 

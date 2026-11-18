@@ -95,11 +95,11 @@ flatpak run org.flatpak.Builder --user --force-clean --install \
 
 ### Verifying the installed build
 
-The app version stays `0.2.0`, so compare the commit instead:
+Check the version (0.3.0 or newer) and, for a local build, the commit:
 
 ```bash
+flatpak info --user org.siriusos.SoberShaderManager | grep -E "Version|Commit"
 git -C ~/sirius-os-sober-shaders rev-parse HEAD
-flatpak info --user org.siriusos.SoberShaderManager | grep Commit
 ```
 
 Launch the user build explicitly if the desktop icon opens the system one:
