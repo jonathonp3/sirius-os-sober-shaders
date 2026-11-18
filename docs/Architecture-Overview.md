@@ -25,7 +25,7 @@ layer below it**.
 │ function calls (no subprocess)
 ┌──────────────────────▼──────────────────────────────────────┐
 │ Core (pure Python) — core/ │
-│ runtime, config, launch, fetch, shader │
+│ runtime, config, launch, fetch, importing, shader │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,10 +34,11 @@ layer below it**.
 ## Why this shape:
 
 - **Core has no GUI or subprocess imports.** `runtime`, `config`, `launch`,
-  `fetch`, `shader` are pure functions and dataclasses. They're testable
-  without a display, without Sober installed, without network. The only
-  subprocess calls are wrapped in injectable `Runner` functions, so tests
-  pass a fake and never shell out.
+  `fetch`, `shader` are pure functions and dataclasses; `importing` reads a
+  source tree and writes only into the sandbox directories it is given.
+  Everything is testable without a display, without Sober installed, without
+  network. Subprocess calls are wrapped in injectable `Runner` functions, so
+  tests pass a fake and never shell out.
 - **The CLI is a thin wrapper.** Every command is a parse + one or two
   core calls + formatting. `apply` is the only command with real
   orchestration logic (backup → write → verify-launch → restore-on-failure).
@@ -46,10 +47,10 @@ layer below it**.
   JSON, and works with the dataclasses. This means the CLI is the single
   source of truth for "what does apply do" — the GUI can't drift.
 
-The one place the GUI *does* import Core is `core.shader` (for the shader
-list and dependency check) and `core.config` (for parsing the active
-config on load). Those are read-only, fast, no subprocess — safe to call
-in the GTK main thread.
+The GUI also imports `core.shader` (shader list and dependency check),
+`core.config` (parsing the active config on load), and `core.importing`
+(the folder-import flow, which writes only to the sandbox). None of them
+spawn a subprocess, so they're safe to call in the GTK main thread.
 
 ## Directory layout
 
@@ -62,6 +63,7 @@ sirius-os-sober-shaders/
 │ ├── config.py parse/validate/write vkBasalt.conf
 │ ├── launch.py launch Sober (normal, detached, verify, verify-then-detach)
 │ ├── fetch.py git clone/pull GShade and ReShade repos
+│ ├── importing.py import decisions, path rewrite, copy
 │ └── shader.py parse .fx files, check include/texture deps
 ├── cli/ argparse wrappers around core
 │ ├── main.py subcommand dispatch, one function per command
@@ -199,6 +201,32 @@ if it does and `update=True`, `git pull --ff-only`; if it exists and
 `update=False`, return `already-present` without touching it. The
 `already-present` path is important: the GUI's Fetch runs `_fetch_done`
 even on `already-present`, so the copy-to-sandbox step still happens.
+
+### `core/importing.py` — import decisions and copying
+
+The import pipeline shared by `scripts/import-shaders.py` and the GUI.
+
+- `discover_assets(root)` — finds `.fx` anywhere under the source, and
+  anchors headers/textures on a `Shaders/` and `Textures/` directory if
+  present (so qUINT's flat layout and reshade-shaders' `Includes/` layout
+  both work).
+- `build_available()` — builds the flattened namespace vkBasalt will see:
+  sandbox contents first, then the source (source wins). Files that are
+  identical once path rewriting is applied are not reported as collisions.
+- `validate_shader()` — walks includes transitively and collects textures
+  declared in headers as well as the top-level shader. Returns a
+  `ShaderDecision` with `status`, `reason`, and the resolved dependencies.
+- `rewrite_references()` — converts Windows separators and `./` prefixes in
+  `#include` and `source = "..."` paths to POSIX. This is required, not
+  cosmetic: vkBasalt's preprocessor substitutes the raw include string into
+  the including file's path and never converts backslashes.
+- `copy_decided()` / `import_root()` — copy each shader and its dependencies
+  to both the flat path and the preserved subpath, rewriting shader text on
+  the way in. `import_root()` is the one-call entry point (pass `dry=True`
+  for a preview).
+
+It has no subprocess calls; the only writes go to the `shader_dir` /
+`texture_dir` passed in.
 
 ### `core/shader.py` — .fx parsing
 

@@ -54,50 +54,62 @@ Idempotent. Running it twice copies nothing the second time (unless
 
 **import-shaders.py**
 
-Copy shaders and textures from an arbitrary source directory into the
-sandbox, then validate each imported shader's dependencies.
+Import shaders (and their headers/textures) from a local directory or a git
+URL into the Sober sandbox. Every shader is validated before anything is
+copied, so the sandbox only receives shaders whose dependencies resolve.
 
 ```bash
-
-./import-shaders.py ~/Downloads/my-shader-pack
-./import-shaders.py ~/Downloads/my-shader-pack --dry-run
-./import-shaders.py ~/Downloads/my-shader-pack --force
-```
-The source directory should look like:
-```text
-
-my-shader-pack/
-├── FancyShader.fx
-├── FancyShader.fxh
-├── ReShade.fxh           (optional; framework headers)
-└── Textures/
-    ├── dirt.png
-    └── noise.png
+./import-shaders.py https://github.com/martymcmodding/qUINT --dry-run
+./import-shaders.py https://github.com/martymcmodding/qUINT
+./import-shaders.py ~/Reshade-Shaders --verify-each
+./import-shaders.py ~/Reshade-Shaders --json
 ```
 
----
+The source may be:
 
-## What it does:
+- a local directory (a clone of qUINT, reshade-shaders, an extracted pack), or
+- an `https://` / `git@` URL, which is shallow-cloned into a temp directory
+  and removed afterwards.
 
-1 Copies `*.fx`and `*.fxh` from the source directory (top level only) to
-  the sandbox `Shaders/`
+Layout is discovered, not prescribed: shaders may sit at the top level or
+under `Shaders/`, headers at the top level or under `Includes/`, textures
+under `Textures/` or `Textures/<author>/`.
 
-2. Copies `Textures/*` to the sandbox `Textures/`
+What it does:
 
-3. Parses each imported `.fx` and checks its includes and textures against
-   the sandbox contents
+1. Finds `.fx` files, `.fxh` headers, and image files under the source.
+2. Builds the flattened namespace vkBasalt will see after import, seeded
+   with what is already in the sandbox (so `ReShade.fxh` from a prior Fetch
+   satisfies an include).
+3. Validates each shader: every include is followed transitively, and every
+   texture (including textures declared inside headers) must exist at the
+   flat path vkBasalt searches.
+4. Copies only validated shaders, rewriting Windows `.\Includes\...`
+   paths to POSIX (`Includes/...`) because vkBasalt does not convert
+   backslashes. Each header/texture lands at both the flat path and its
+   preserved subpath, so `#include "foo.fxh"` and
+   `#include "Includes/foo.fxh"` both resolve.
+5. Prints a report: imported shaders, rejected shaders with the missing
+   dependency, and name collisions.
 
-4. Prints a report: which shaders are fully resolved, which will gray out
-   in the GUI (with the specific missing filenames)
+Options:
 
-`--dry-run` previews without touching the sandbox. `--force` overwrites
-existing files; default is copy-if-newer, so re-importing the same pack is
-a no-op.
+- `--dry-run` — validate and report without touching the sandbox.
+- `--force` — overwrite even when the sandbox copy looks up to date.
+- `--json` — machine-readable report for the GUI.
+- `--verify` — launch Sober once with all candidates and read vkBasalt's
+  log; shaders that fail to compile are removed and reported.
+- `--verify-each` — launch Sober once per shader. Slower, but attributes
+  errors that vkBasalt reports at a header path.
 
-Run `Fetch` at least once first. Framework headers like ReShade.fxh
-are needed for most shaders to compile, and Fetch is what puts them in the
-sandbox. Without them, every imported shader reports a missing
-ReShade.fxh include.
+`--verify-each` is the reliable compile gate. Without a verify flag, a
+shader that has all its dependencies but uses an unsupported ReShade
+intrinsic is still imported (dependency checking cannot see that); run a
+verify pass after importing a new pack.
+
+Run Fetch at least once first: many shaders need `ReShade.fxh`, and a
+shader that still needs it is rejected with `missing include: ReShade.fxh`
+rather than silently imported.
 
 **restore-shaders.sh**
 

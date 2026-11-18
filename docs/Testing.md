@@ -23,19 +23,27 @@ pip install pytest
 
 The tests are organized by module, one file per source file:
 
-| Test file | Covers | Approx. count |
+| Test file | Covers | Count |
 |---|---|---:|
-| `tests/test_runtime.py` | `core/runtime.py` — Sober runtime detection, vkBasalt extension branch detection, and compatibility checks | ~10 |
-| `tests/test_shader.py` | `core/shader.py` — `.fx` parsing, uniform extraction, and include/texture dependency resolution | ~8 |
-| `tests/test_config.py` | `core/config.py` — `vkBasalt.conf` parsing, writing, and validation | ~6 |
-| `tests/test_fetch.py` | `core/fetch.py` — Git clone/pull wrapper | ~4 |
-| `tests/test_launch.py` | `core/launch.py` — launch modes (normal, detached, verify, verify-then-detach) and running-instance checks | ~10 |
-| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner | ~12 |
+| `tests/test_runtime.py` | `core/runtime.py` — Sober runtime detection, vkBasalt extension branch detection, and compatibility checks | 8 |
+| `tests/test_shader.py` | `core/shader.py` — `.fx` parsing, uniform extraction, reference normalization, and include/texture dependency resolution | 17 |
+| `tests/test_importing.py` | `core/importing.py` — asset discovery, flattened namespace, import decisions, path rewriting, and copy layout | 24 |
+| `tests/test_config.py` | `core/config.py` — `vkBasalt.conf` parsing, writing, and validation | 9 |
+| `tests/test_fetch.py` | `core/fetch.py` — Git clone/pull wrapper | 5 |
+| `tests/test_launch.py` | `core/launch.py` — launch modes (normal, detached, verify, verify-then-detach) and running-instance checks | 14 |
+| `tests/test_cli.py` | `cli/main.py` — each subcommand’s handler with a mocked runner | 23 |
 | `tests/fixtures/` | Captured Flatpak info, `flatpak list` output, `.fx` files, and fake `.fx` shaders | — |
 
 
-The count adds up to ~50 tests. The exact number appears in the pytest output
-(`50 passed in 0.42s` or similar).
+The count adds up to 100 tests. The exact number appears in the pytest output
+(`100 passed in 0.08s` or similar).
+
+`tests/test_importing.py` builds small source trees under pytest's
+`tmp_path` — a qUINT-style flat `Shaders/` and a Barbatos-style
+`Shaders/Includes/` + `Textures/<author>/` tree — and asserts which shaders
+are imported, which are rejected, and why. It also covers the Windows-path
+rewrite and that copies land at both the flat and preserved paths. No Sober
+launch is involved.
 
 
 ## The three design constraints
@@ -222,6 +230,11 @@ the function uses (`stdout.readline`, `poll`, `kill`, `stdout.close`).
 
 - Real git clones. `core/fetch.py's` runner is mocked. The suite doesn't
   catch network errors, auth issues, or repo-URL changes.
+
+- Compile verification. `--verify` / `--verify-each` launch Sober and read
+  vkBasalt's log, so they are validated manually against a real install.
+  The unit suite covers the dependency decisions that happen before the
+  launch, not the compiler's verdict.
 
 - Integration. There's no end-to-end test that runs apply against a
   real Sober install. That's the manual validation flow described in

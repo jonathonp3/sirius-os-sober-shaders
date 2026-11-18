@@ -226,42 +226,70 @@ Git release) — the on-disk copies don't survive disk failure.
 ## Importing shaders from other sources
 
 `Fetch` clones the GShade and ReShade repos. If you have shaders from
-another source — a ReShade forum post, a GitHub release, a friend's
-pack — put them in a directory with this layout:
+another source — a GitHub repo, a ReShade forum post, a friend's pack — the
+import script locates the assets itself. It handles both common layouts:
 
 ```text
-my-shader-pack/
-├── FancyShader.fx
-├── FancyShader.fxh
-├── ReShade.fxh           (optional; framework headers)
-└── Textures/
-    ├── dirt.png
-    └── noise.png
+qUINT/                                reshade-shaders/
+├── Shaders/                          ├── Shaders/
+│   ├── qUINT_ssr.fx                  │   ├── BaBa_SSR.fx
+│   └── qUINT_common.fxh              │   └── Includes/bb_common.fxh
+└── Textures/ (optional)              └── Textures/Barbatos/SS_BN2.png
 ```
 
-Then import them into the sandbox:
+Point it at a directory or a git URL:
+
 ```bash
-python3 scripts/import-shaders.py ~/Downloads/my-shader-pack
+# Preview: validate and report, touch nothing
+python3 scripts/import-shaders.py ~/qUINT --dry-run
+
+# Import only shaders whose dependencies all resolve
+python3 scripts/import-shaders.py ~/qUINT
+
+# Same, from a repo URL
+python3 scripts/import-shaders.py https://github.com/martymcmodding/qUINT
+
+# Machine-readable report for the GUI
+python3 scripts/import-shaders.py ~/qUINT --json
 ```
 
-The script copies `.fx/.fxh` files to the sandbox `Shaders/` directory
-and `Textures/*` to `Textures/`, then validates each imported shader's
-dependencies against the sandbox contents. The report says which shaders
-will load and which will gray out in the GUI, with the missing filenames
-for the latter.
+Validation is compiler-accurate: an `#include` resolves only against the
+flat sandbox `Shaders/` directory (the way vkBasalt's include path works),
+and includes are followed transitively. Textures declared inside included
+headers count as dependencies too. Windows-style `.\Includes\foo.fxh`
+paths are rewritten to POSIX in the copied `.fx`/`.fxh` files, because
+vkBasalt does not convert backslashes when it opens an include.
 
-`--dry-run` previews the copy and the validation without touching the
-sandbox. `--force` overwrites existing files; by default only files that
-are new or newer than what's in the sandbox are copied, so re-importing
-the same pack is a no-op.
+The report lists every imported shader, every rejected shader with the
+missing include/texture, and any name collisions. Re-importing the same
+pack is a no-op unless the source files changed.
+
+### Compile verification
+
+Dependency validation cannot know whether vkBasalt's compiler accepts a
+shader — newer ReShade intrinsics like `tex2Dfetch` or `tex2DgatherG` may
+not be supported. Two optional gates launch Sober once and read its log:
+
+```bash
+# One batch launch: fast, attributes errors that name the .fx
+python3 scripts/import-shaders.py ~/Reshade-Shaders --verify
+
+# One launch per shader: slower, exact even when the error names a header
+python3 scripts/import-shaders.py ~/Reshade-Shaders --verify-each
+```
+
+Shaders that fail the compile gate are removed from the sandbox (only the
+top-level `.fx`; shared headers/textures stay) and reported as rejected.
+`--verify-each` is the reliable mode: vkBasalt reports some errors at the
+header path, which the single-pass mode cannot attribute.
 
 Run `Fetch` at least once before importing: framework headers like
-`ReShade.fxh` are needed for most shaders to compile, and Fetch is what
-puts them in the sandbox. Without them, every imported shader will report
-a missing `ReShade.fxh` include.
+`ReShade.fxh` are needed by many shaders, and Fetch puts them in the
+sandbox. A shader that still needs a header is now rejected with
+`missing include: ReShade.fxh` instead of being silently imported.
 
-See [scripts/README.md](scripts/README.md) for the full import workflow,
-including `--dry-run` and `--force`.
+See [scripts/README.md](scripts/README.md) for the full workflow.
+
 ---
 
 ## Configuration
